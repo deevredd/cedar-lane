@@ -41,7 +41,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "name": {"type": "string", "description": "Caller's name."},
                 "phone": {"type": "string", "description": "Caller's 10-digit phone number, digits only (e.g. '4155550190')."},
                 "service": {"type": "string", "enum": SERVICE_ENUM},
-                "start": {"type": "string", "description": "Start as 'YYYY-MM-DD HH:MM' (24h), copied from check_availability."},
+                "start": {"type": "string", "description": "Agreed start time as 'YYYY-MM-DD HH:MM' (24h) from check_availability, or '<day> HH:MM' (e.g. '2026-10-08 16:30' or 'thursday 16:30'). Keep the exact date agreed upon!"},
                 "vehicle": {"type": "string", "description": "Vehicle make/model/type if mentioned."},
                 "notes": {"type": "string", "description": "Any special requests (pet hair, stains, etc.)."},
             },
