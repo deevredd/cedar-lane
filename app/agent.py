@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 import uuid
 from dataclasses import dataclass, field
@@ -115,7 +116,12 @@ def _run(sess: ChatSession) -> Dict[str, Any]:
                     sess.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
                     continue
 
-            result = dispatch(name, args, sess.state)
+            try:
+                result = dispatch(name, args, sess.state)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("Tool execution failed: %s", name)
+                result = {"error": f"Failed to execute {name}: {exc}"}
+
             log.info("tool %s(%s) -> %s", name, args, result)
             trace.append({"tool": name, "args": args, "result": result})
             sess.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
