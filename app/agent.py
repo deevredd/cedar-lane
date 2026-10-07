@@ -38,9 +38,19 @@ def _session(session_id: str) -> ChatSession:
     return s
 
 
+def _trimmed_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if len(messages) <= 16:
+        return messages
+    sys_msg = messages[0]
+    tail = messages[-14:]
+    while tail and tail[0].get("role") == "tool":
+        tail = tail[1:]
+    return [sys_msg] + tail
+
+
 def _complete(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     url = settings.llm_base_url.rstrip("/") + "/chat/completions"
-    payload = {"model": settings.llm_model, "messages": messages, "tools": openai_tools(),
+    payload = {"model": settings.llm_model, "messages": _trimmed_messages(messages), "tools": openai_tools(),
                "tool_choice": "auto", "temperature": 0.2}
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
     resp = None
