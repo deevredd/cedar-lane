@@ -10,7 +10,7 @@
   .user { text-align: right; } .user span { background: #dbeafe; }
   .agent span { background: #f1f5f9; }
   .m span { display: inline-block; padding: 8px 12px; border-radius: 12px; max-width: 80%; text-align: left; }
-  .tool { font: 11px monospace; color: #64748b; margin: 2px 0 2px 8px; }
+  .tool { font: 11px monospace; color: #475569; margin: 4px 0 4px 12px; background: #f8fafc; border-left: 3px solid #94a3b8; padding: 4px 8px; border-radius: 4px; }
   form { display: flex; gap: 8px; margin-top: 8px; } input { flex: 1; padding: 10px; }
 </style>
 </head>
@@ -21,7 +21,7 @@
   <input id="t" placeholder="Type a message…" autocomplete="off" autofocus>
   <button>Send</button>
   <button type="button" id="end">End chat</button>
-  <label style="font-size:12px"><input type="checkbox" id="showTools" checked> tools</label>
+  <label style="font-size:12px; color: #64748b; cursor: pointer;"><input type="checkbox" id="showTools"> show tool calls</label>
 </form>
 <script>
 let sid = crypto.randomUUID();
@@ -35,7 +35,7 @@ function tools(list) {
   if (!document.getElementById('showTools').checked) return;
   for (const x of list || []) {
     const d = document.createElement('div'); d.className = 'tool';
-    d.textContent = '⚙ ' + x.tool + ' ' + JSON.stringify(x.args) + ' → ' + JSON.stringify(x.result).slice(0, 300);
+    d.textContent = '⚙ ' + x.tool + ' ' + JSON.stringify(x.args);
     log.appendChild(d);
   }
 }

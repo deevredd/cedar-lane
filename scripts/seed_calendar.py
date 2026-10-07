@@ -15,15 +15,10 @@ from app.config import settings  # noqa: E402
 from app.phone import format_phone  # noqa: E402
 from app.tools import gcal, sheets  # noqa: E402
 
-# (weekday, "HH:MM", service, name, phone, vehicle)
+# Minimal seed: 2:30 and 3:30 booked so 3:30 is full and 4:30 is the immediate alternative
 SEED = [
-    ("thursday", "09:00", "full_detail", "Dana Whitfield", "+14155550111", "2019 Subaru Outback"),
-    ("thursday", "12:30", "interior_detail", "Chris Ono", "+14155550112", "Honda Civic"),
     ("thursday", "14:30", "interior_detail_and_wash", "Priya Shah", "+14155550113", "Tesla Model Y"),
     ("thursday", "15:30", "interior_detail_and_wash", "Mike Torres", "+14155550114", "Ford F-150"),
-    ("friday", "10:00", "exterior_wash", "Jordan Lee", "+14155550123", "Mazda CX-5"),
-    ("friday", "13:00", "full_detail", "Alex Kim", "+14155550124", "BMW X5"),
-    ("saturday", "09:00", "interior_detail", "Sam Rivera", "+14155550125", "Toyota Sienna"),
 ]
 
 
