@@ -67,6 +67,19 @@ def _complete(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     return resp.json()
 
 
+NUM_WORDS = {
+    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
+}
+
+
+def _user_provided_digits(messages: List[Dict[str, Any]]) -> str:
+    text = " ".join(m.get("content", "").lower() for m in messages if m.get("role") == "user")
+    for word, d in NUM_WORDS.items():
+        text = re.sub(rf"\b{word}\b", d, text)
+    return "".join(re.findall(r"\d", text))
+
+
 def _run(sess: ChatSession) -> Dict[str, Any]:
     trace: List[Dict[str, Any]] = []
     for _ in range(MAX_HOPS):
@@ -88,6 +101,20 @@ def _run(sess: ChatSession) -> Dict[str, Any]:
                 args = json.loads(tc["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 args = {}
+
+            if name == "book_appointment":
+                phone_digits = "".join(re.findall(r"\d", str(args.get("phone", ""))))[-10:]
+                user_digits = _user_provided_digits(sess.messages)
+                if not phone_digits or phone_digits not in user_digits:
+                    result = {
+                        "booked": False,
+                        "error": "The customer has not provided their phone number yet. Ask the customer: 'What is your phone number?'",
+                    }
+                    log.warning("Rejected book_appointment with unprovided/hallucinated phone: %s", args.get("phone"))
+                    trace.append({"tool": name, "args": args, "result": result})
+                    sess.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
+                    continue
+
             result = dispatch(name, args, sess.state)
             log.info("tool %s(%s) -> %s", name, args, result)
             trace.append({"tool": name, "args": args, "result": result})
