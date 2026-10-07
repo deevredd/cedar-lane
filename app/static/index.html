@@ -48,8 +48,15 @@ async function post(path, message) {
 document.getElementById('f').onsubmit = async (e) => {
   e.preventDefault(); const msg = t.value.trim(); if (!msg) return;
   t.value = ''; add('user', msg); add('agent', '…');
-  try { const r = await post('/api/chat', msg); log.lastChild.remove(); tools(r.tools); add('agent', r.reply); }
-  catch (err) { log.lastChild.remove(); add('agent', 'Error: ' + err.message); }
+  try {
+    const r = await post('/api/chat', msg);
+    log.lastChild.remove();
+    tools(r.tools);
+    if (r.reply) { add('agent', r.reply); }
+  } catch (err) {
+    log.lastChild.remove();
+    add('agent', 'Error: ' + err.message);
+  }
 };
 document.getElementById('end').onclick = async () => {
   try { const r = await post('/api/end', ''); tools(r.tools); } catch (err) { add('agent', 'Error: ' + err.message); }

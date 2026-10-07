@@ -68,7 +68,10 @@ def _run(sess: ChatSession) -> Dict[str, Any]:
         clean["role"] = "assistant"
         sess.messages.append(clean)
         if not tool_calls:
-            return {"reply": (msg.get("content") or "").strip(), "tools": trace}
+            text = (msg.get("content") or "").strip()
+            if not text and trace and any(t["tool"] == "log_interaction" for t in trace):
+                text = "You're all set! Thanks for reaching out to Cedar Lane Auto Detailing, have a great day!"
+            return {"reply": text, "tools": trace}
         for tc in tool_calls:
             name = tc["function"]["name"]
             try:
