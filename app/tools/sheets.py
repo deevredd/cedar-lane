@@ -1,4 +1,9 @@
-"""Google Sheets: Contacts (one row per caller) and CallLog (one row per conversation)."""
+"""Google Sheets CRM integrations.
+
+Manages two tabs in the shop spreadsheet:
+1. 'Contacts': One row per customer (identified by their unique E.164 phone number).
+2. 'CallLog': Chronological audit trail of all conversations and AI interactions.
+"""
 from __future__ import annotations
 
 import logging
@@ -14,86 +19,167 @@ from app.google_auth import get_credentials
 
 log = logging.getLogger(__name__)
 
-CONTACTS = "Contacts"
-CALLLOG = "CallLog"
-CONTACT_HEADERS = ["phone", "name", "vehicle", "first_contact", "last_contact",
-                   "total_interactions", "upcoming_appointment", "notes"]
-CALLLOG_HEADERS = ["timestamp", "channel", "session_id", "phone", "name", "intent",
-                   "summary", "outcome", "event_ids", "needs_followup"]
+CONTACTS_TAB = "Contacts"
+CALLLOG_TAB = "CallLog"
 
-_lock = threading.RLock()
-_spreadsheet = None
+CONTACT_COLUMNS = [
+    "phone",
+    "name",
+    "vehicle",
+    "first_contact",
+    "last_contact",
+    "total_interactions",
+    "upcoming_appointment",
+    "notes",
+]
+
+CALLLOG_COLUMNS = [
+    "timestamp",
+    "channel",
+    "session_id",
+    "phone",
+    "name",
+    "intent",
+    "summary",
+    "outcome",
+    "event_ids",
+    "needs_followup",
+]
+
+# Thread lock to prevent race conditions during concurrent sheet writes
+_sheet_lock = threading.RLock()
+_cached_spreadsheet = None
 
 
-def _col(n: int) -> str:
-    return chr(ord("A") + n - 1)
+def _column_letter(column_number: int) -> str:
+    """Convert 1-based column number to letter (e.g. 1 -> 'A', 8 -> 'H', 10 -> 'J')."""
+    return chr(ord("A") + column_number - 1)
 
 
-def spreadsheet():
-    global _spreadsheet
-    if _spreadsheet is None:
-        _spreadsheet = gspread.authorize(get_credentials()).open_by_key(settings.sheet_id)
-    return _spreadsheet
+def get_spreadsheet():
+    """Return authorized gspread Spreadsheet instance (cached)."""
+    global _cached_spreadsheet
+    if _cached_spreadsheet is None:
+        credentials = get_credentials()
+        _cached_spreadsheet = gspread.authorize(credentials).open_by_key(settings.sheet_id)
+    return _cached_spreadsheet
 
 
-def _ws(title: str):
-    return spreadsheet().worksheet(title)
+def _get_worksheet(title: str):
+    return get_spreadsheet().worksheet(title)
 
 
-def _now() -> str:
+def _current_timestamp() -> str:
+    """Return current shop time formatted as 'YYYY-MM-DD HH:MM'."""
     return datetime.now(settings.tz).strftime("%Y-%m-%d %H:%M")
 
 
-def upsert_contact(phone: str, name: Optional[str] = None, vehicle: Optional[str] = None,
-                   upcoming: Optional[str] = None, note: Optional[str] = None,
-                   increment_interactions: bool = False) -> int:
-    """Create or update the caller's row (keyed by E.164 phone). Returns the row number."""
-    with _lock:
-        ws = _ws(CONTACTS)
-        phones = ws.col_values(1)
-        ts = _now()
-        if phone in phones:
-            row = phones.index(phone) + 1
-            values = ws.row_values(row)
-            values += [""] * (len(CONTACT_HEADERS) - len(values))
-            rec = dict(zip(CONTACT_HEADERS, values))
+def _row_number_from_response(append_response: dict) -> int:
+    """Extract inserted row index from gspread append response."""
+    updated_range = ((append_response or {}).get("updates") or {}).get("updatedRange", "")
+    match = re.search(r"![A-Z]+(\d+)", updated_range)
+    return int(match.group(1)) if match else 0
+
+
+def upsert_contact(
+    phone: str,
+    name: Optional[str] = None,
+    vehicle: Optional[str] = None,
+    upcoming: Optional[str] = None,
+    note: Optional[str] = None,
+    increment_interactions: bool = False,
+) -> int:
+    """Create or update a customer record in the 'Contacts' sheet.
+
+    Keyed by customer's phone number in E.164 format.
+    Returns the updated or created row number.
+    """
+    with _sheet_lock:
+        worksheet = _get_worksheet(CONTACTS_TAB)
+        existing_phones = worksheet.col_values(1)
+        timestamp = _current_timestamp()
+
+        # Check if caller already exists in the sheet
+        if phone in existing_phones:
+            row_idx = existing_phones.index(phone) + 1
+            raw_values = worksheet.row_values(row_idx)
+            # Pad values to match header length if trailing columns were empty
+            raw_values += [""] * (len(CONTACT_COLUMNS) - len(raw_values))
+            record = dict(zip(CONTACT_COLUMNS, raw_values))
         else:
-            row = None
-            rec = {h: "" for h in CONTACT_HEADERS}
-            rec.update(phone=phone, first_contact=ts, total_interactions="0")
+            row_idx = None
+            record = {col: "" for col in CONTACT_COLUMNS}
+            record["phone"] = phone
+            record["first_contact"] = timestamp
+            record["total_interactions"] = "0"
+
+        # Update customer fields if provided
         if name:
-            rec["name"] = name
+            record["name"] = name
         if vehicle:
-            rec["vehicle"] = vehicle
+            record["vehicle"] = vehicle
         if upcoming is not None:
-            rec["upcoming_appointment"] = upcoming
+            record["upcoming_appointment"] = upcoming
         if note:
-            rec["notes"] = f"{rec['notes']} | {note}" if rec["notes"] else note
-        count = int(rec["total_interactions"] or 0)
-        rec["total_interactions"] = count + 1 if increment_interactions else count
-        rec["last_contact"] = ts
-        out = [rec[h] for h in CONTACT_HEADERS]
+            existing_note = record.get("notes", "")
+            record["notes"] = f"{existing_note} | {note}" if existing_note else note
+
+        # Track conversation frequency
+        current_interactions = int(record.get("total_interactions") or 0)
+        if increment_interactions:
+            record["total_interactions"] = current_interactions + 1
+        record["last_contact"] = timestamp
+
+        row_data = [record[col] for col in CONTACT_COLUMNS]
+
+        if row_idx:
+            # Overwrite existing row
+            range_name = f"A{row_idx}:{_column_letter(len(row_data))}{row_idx}"
+            worksheet.update(range_name=range_name, values=[row_data], value_input_option="RAW")
+            return row_idx
+        else:
+            # Append new row
+            response = worksheet.append_row(row_data, value_input_option="RAW")
+            return _row_number_from_response(response)
+
+
+def log_interaction(
+    session_id: str,
+    channel: str,
+    phone: str,
+    name: str,
+    intent: str,
+    summary: str,
+    outcome: str,
+    event_ids: str,
+    needs_followup: bool,
+    row: Optional[int] = None,
+) -> int:
+    """Record an interaction in the 'CallLog' tab.
+
+    If 'row' is provided, updates that existing log row in-place (used to avoid duplicate rows).
+    Otherwise, appends a new row.
+    Returns the target row number.
+    """
+    with _sheet_lock:
+        worksheet = _get_worksheet(CALLLOG_TAB)
+        row_data = [
+            _current_timestamp(),
+            channel,
+            session_id,
+            phone,
+            name,
+            intent,
+            summary,
+            outcome,
+            event_ids,
+            "TRUE" if needs_followup else "FALSE",
+        ]
+
         if row:
-            ws.update(range_name=f"A{row}:{_col(len(out))}{row}", values=[out], value_input_option="RAW")
+            range_name = f"A{row}:{_column_letter(len(row_data))}{row}"
+            worksheet.update(range_name=range_name, values=[row_data], value_input_option="RAW")
             return row
-        resp = ws.append_row(out, value_input_option="RAW")
-        return _row_from_append(resp)
-
-
-def log_interaction(session_id: str, channel: str, phone: str, name: str, intent: str, summary: str,
-                    outcome: str, event_ids: str, needs_followup: bool, row: Optional[int] = None) -> int:
-    """Append a CallLog row (or overwrite this conversation's existing row). Returns the row number."""
-    with _lock:
-        ws = _ws(CALLLOG)
-        out = [_now(), channel, session_id, phone, name, intent, summary, outcome, event_ids,
-               "TRUE" if needs_followup else "FALSE"]
-        if row:
-            ws.update(range_name=f"A{row}:{_col(len(out))}{row}", values=[out], value_input_option="RAW")
-            return row
-        return _row_from_append(ws.append_row(out, value_input_option="RAW"))
-
-
-def _row_from_append(resp) -> int:
-    rng = ((resp or {}).get("updates") or {}).get("updatedRange", "")
-    m = re.search(r"![A-Z]+(\d+)", rng)
-    return int(m.group(1)) if m else 0
+        else:
+            response = worksheet.append_row(row_data, value_input_option="RAW")
+            return _row_number_from_response(response)

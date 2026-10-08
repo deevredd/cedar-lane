@@ -1,4 +1,8 @@
-"""Pure date/time + slot logic (no Google calls, fully unit-testable)."""
+"""Pure date/time and appointment slot logic.
+
+This module contains deterministic scheduling and calendar calculations.
+It has zero network or Google API calls, making it 100% unit-testable locally.
+"""
 from __future__ import annotations
 
 import re
@@ -7,144 +11,260 @@ from typing import List, Optional, Sequence, Tuple
 
 from app import business
 
+# Appointment slots start every 30 minutes on the hour and half-hour (:00, :30)
 SLOT_STEP_MIN = 30
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
-Busy = Sequence[Tuple[datetime, datetime]]
+
+# Sequence of (start_datetime, end_datetime) for existing booked appointments
+BusyTimes = Sequence[Tuple[datetime, datetime]]
 
 
 def open_hours(d: date) -> Optional[Tuple[time, time]]:
+    """Return (open_time, close_time) for a given date, or None if closed."""
     return business.HOURS.get(d.weekday())
 
 
-def overlaps(s1: datetime, e1: datetime, s2: datetime, e2: datetime) -> bool:
-    return s1 < e2 and s2 < e1
+def overlaps(start_1: datetime, end_1: datetime, start_2: datetime, end_2: datetime) -> bool:
+    """Return True if two time intervals overlap (strictly s1 < e2 and s2 < e1)."""
+    return start_1 < end_2 and start_2 < end_1
 
 
-def fmt_time(dt) -> str:
-    h = dt.hour % 12 or 12
-    return f"{h}:{dt.minute:02d} {'AM' if dt.hour < 12 else 'PM'}"
+def fmt_time(dt: datetime) -> str:
+    """Format datetime as 12-hour string, e.g. '9:00 AM' or '3:30 PM'."""
+    hour = dt.hour % 12 or 12
+    am_pm = "AM" if dt.hour < 12 else "PM"
+    return f"{hour}:{dt.minute:02d} {am_pm}"
 
 
 def fmt_label(dt: datetime) -> str:
+    """Format full human label, e.g. 'Thursday Oct 8, 3:30 PM'."""
     return f"{dt:%A} {dt:%b} {dt.day}, {fmt_time(dt)}"
 
 
 def slot_key(dt: datetime) -> str:
+    """Standard 24-hour timestamp string for APIs and storage: 'YYYY-MM-DD HH:MM'."""
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
-def check_slot(start: datetime, duration_min: int, busy: Busy, now: datetime) -> Tuple[bool, str]:
+def check_slot(
+    start: datetime,
+    duration_min: int,
+    busy: BusyTimes,
+    now: datetime,
+) -> Tuple[bool, str]:
+    """Check if a specific time slot is valid and open.
+
+    Returns:
+        (True, "") if the slot is open.
+        (False, reason_message) if the slot cannot be booked.
+    """
     end = start + timedelta(minutes=duration_min)
     hours = open_hours(start.date())
+
+    # 1. Check if the shop is open on this day of the week
     if hours is None:
         return False, f"We're closed on {start:%A}s."
-    open_dt = datetime.combine(start.date(), hours[0], tzinfo=start.tzinfo)
-    close_dt = datetime.combine(start.date(), hours[1], tzinfo=start.tzinfo)
+
+    open_time, close_time = hours
+    open_dt = datetime.combine(start.date(), open_time, tzinfo=start.tzinfo)
+    close_dt = datetime.combine(start.date(), close_time, tzinfo=start.tzinfo)
+
+    # 2. Check if requested time is in the past
     if start <= now:
         return False, "That time has already passed."
+
+    # 3. Check if start time falls within operating hours
     if start < open_dt or start >= close_dt:
         return False, f"That's outside business hours ({fmt_time(open_dt)} to {fmt_time(close_dt)})."
+
+    # 4. Check if service would run past closing time
     if end > close_dt:
         return False, f"This service takes {duration_min} minutes and would run past closing at {fmt_time(close_dt)}."
-    if any(overlaps(start, end, bs, be) for bs, be in busy):
-        return False, "That time is already booked."
+
+    # 5. Check for conflicts with existing calendar bookings (single-bay shop)
+    for busy_start, busy_end in busy:
+        if overlaps(start, end, busy_start, busy_end):
+            return False, "That time is already booked."
+
     return True, ""
 
 
-def candidate_starts(d: date, duration_min: int, busy: Busy, now: datetime, tz: tzinfo) -> List[datetime]:
+def candidate_starts(
+    d: date,
+    duration_min: int,
+    busy: BusyTimes,
+    now: datetime,
+    tz: tzinfo,
+) -> List[datetime]:
+    """Generate all available appointment start times on a given date."""
     hours = open_hours(d)
     if not hours:
         return []
-    cur = datetime.combine(d, hours[0], tzinfo=tz)
-    close = datetime.combine(d, hours[1], tzinfo=tz)
-    out = []
-    while cur + timedelta(minutes=duration_min) <= close:
-        if check_slot(cur, duration_min, busy, now)[0]:
-            out.append(cur)
-        cur += timedelta(minutes=SLOT_STEP_MIN)
-    return out
+
+    open_time, close_time = hours
+    current_slot = datetime.combine(d, open_time, tzinfo=tz)
+    closing_time = datetime.combine(d, close_time, tzinfo=tz)
+
+    available_slots: List[datetime] = []
+
+    # Step through every 30-minute interval across the workday
+    while current_slot + timedelta(minutes=duration_min) <= closing_time:
+        is_open, _ = check_slot(current_slot, duration_min, busy, now)
+        if is_open:
+            available_slots.append(current_slot)
+        current_slot += timedelta(minutes=SLOT_STEP_MIN)
+
+    return available_slots
 
 
-def nearest_alternatives(requested: datetime, candidates: Sequence[datetime], n: int = 3) -> List[datetime]:
-    """Closest open slots to the requested time; ties go to the later slot."""
-    return sorted(
-        candidates,
-        key=lambda c: (abs((c - requested).total_seconds()), 0 if c > requested else 1),
-    )[:n]
+def nearest_alternatives(
+    requested: datetime,
+    candidates: Sequence[datetime],
+    n: int = 3,
+) -> List[datetime]:
+    """Find the N closest available slots to the requested time.
+
+    If two slots are equally distant (e.g. 30 mins earlier vs 30 mins later),
+    we break the tie by choosing the later slot.
+    """
+    def distance_from_requested(candidate: datetime):
+        time_difference_seconds = abs((candidate - requested).total_seconds())
+        # Tie-breaker: 0 for slots after requested, 1 for slots before requested
+        is_earlier_penalty = 0 if candidate > requested else 1
+        return (time_difference_seconds, is_earlier_penalty)
+
+    sorted_candidates = sorted(candidates, key=distance_from_requested)
+    return sorted_candidates[:n]
 
 
-_TIME_RE = re.compile(r"^(\d{1,2})(?::?(\d{2}))?(?::\d{2})?\s*(am|pm|a|p)?$")
+# Regex for natural time inputs like "3:30 pm", "15:30", "3pm", "3"
+_TIME_REGEX = re.compile(r"^(\d{1,2})(?::?(\d{2}))?(?::\d{2})?\s*(am|pm|a|p)?$")
 
 
 def parse_time(s: str) -> time:
-    """Accepts '15:30', '3:30 pm', '3:30pm', '3pm', '1530', 'noon'. Bare 1-7 means PM (shop hours)."""
-    t = (s or "").strip().lower().replace(".", "").replace("o'clock", "").strip()
-    if t in ("noon", "midday"):
+    """Parse human time string into a Python time object.
+
+    Handles:
+        - 24h: '15:30', '1530'
+        - 12h: '3:30 pm', '3:30pm', '3pm', '9am'
+        - Words: 'noon', 'midday'
+        - Numbers without am/pm during shop hours: 1 to 7 default to PM (e.g. 3 -> 3:00 PM).
+    """
+    clean = (s or "").strip().lower().replace(".", "").replace("o'clock", "").strip()
+
+    if clean in ("noon", "midday"):
         return time(12, 0)
-    m = _TIME_RE.match(t)
-    if not m:
+
+    match = _TIME_REGEX.match(clean)
+    if not match:
         raise ValueError(f"Couldn't understand the time '{s}'.")
-    h, mi, ap = int(m.group(1)), int(m.group(2) or 0), m.group(3)
-    if ap and ap.startswith("p") and h < 12:
-        h += 12
-    elif ap and ap.startswith("a") and h == 12:
-        h = 0
-    elif not ap and 1 <= h <= 7:
-        h += 12
-    if not (0 <= h <= 23 and 0 <= mi <= 59):
+
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    am_pm = match.group(3)
+
+    if am_pm and am_pm.startswith("p") and hour < 12:
+        hour += 12
+    elif am_pm and am_pm.startswith("a") and hour == 12:
+        hour = 0
+    elif not am_pm and 1 <= hour <= 7:
+        # For business hours (8 AM - 6 PM), numbers 1-7 naturally mean PM
+        hour += 12
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
         raise ValueError(f"Couldn't understand the time '{s}'.")
-    return time(h, mi)
+
+    return time(hour, minute)
 
 
 def parse_date(s: str, today: date) -> date:
-    """Accepts ISO dates, 'today', 'tomorrow', weekday names ('thursday', 'next friday'), 'Oct 8', '10/8'."""
-    t = (s or "").strip().lower().rstrip(".,")
-    if t in ("today", "tonight"):
+    """Parse human date string relative to 'today'.
+
+    Handles:
+        - ISO: '2026-10-08'
+        - Relative: 'today', 'tonight', 'tomorrow', 'day after tomorrow'
+        - Weekdays: 'thursday', 'next friday', 'wed'
+        - Natural: 'Oct 8', 'October 8', '10/8', '10/8/2026'
+    """
+    text = (s or "").strip().lower().rstrip(".,")
+
+    if text in ("today", "tonight"):
         return today
-    if t == "tomorrow":
+    if text == "tomorrow":
         return today + timedelta(days=1)
-    if t == "day after tomorrow":
+    if text == "day after tomorrow":
         return today + timedelta(days=2)
-    m = re.match(r"^(\d{4}-\d{2}-\d{2})", t)
-    if m:
-        return date.fromisoformat(m.group(1))
-    words = t.replace("this ", "").split()
+
+    # 1. ISO format (YYYY-MM-DD)
+    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
+    if iso_match:
+        return date.fromisoformat(iso_match.group(1))
+
+    # 2. Weekday names (e.g., "thursday", "next friday")
+    words = text.replace("this ", "").split()
     is_next = bool(words) and words[0] == "next"
     if is_next:
         words = words[1:]
+
     if len(words) == 1:
-        w = words[0]
-        for i, name in enumerate(WEEKDAYS):
-            if w == name or (len(w) >= 3 and name.startswith(w)):
-                delta = (i - today.weekday()) % 7
-                if delta == 0 and is_next:
-                    delta = 7
-                return today + timedelta(days=delta)
-    cleaned = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", t)
-    cleaned = re.sub(r"^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+", "", cleaned)
-    for fmt in ("%B %d", "%b %d", "%m/%d", "%B %d %Y", "%b %d %Y", "%m/%d/%Y", "%B %d, %Y", "%b %d, %Y"):
+        weekday_word = words[0]
+        for index, weekday_name in enumerate(WEEKDAYS):
+            if weekday_word == weekday_name or (len(weekday_word) >= 3 and weekday_name.startswith(weekday_word)):
+                day_offset = (index - today.weekday()) % 7
+                if day_offset == 0 and is_next:
+                    day_offset = 7
+                return today + timedelta(days=day_offset)
+
+    # 3. Calendar date strings (e.g., "October 8th", "10/8")
+    cleaned_date = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text)
+    cleaned_date = re.sub(r"^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+", "", cleaned_date)
+
+    supported_formats = (
+        "%B %d", "%b %d", "%m/%d",
+        "%B %d %Y", "%b %d %Y", "%m/%d/%Y",
+        "%B %d, %Y", "%b %d, %Y"
+    )
+    for fmt in supported_formats:
         try:
-            parsed = datetime.strptime(cleaned, fmt).date()
+            parsed = datetime.strptime(cleaned_date, fmt).date()
         except ValueError:
             continue
+
+        # If year was omitted, default to current year (or next year if date passed)
         if "%Y" not in fmt:
             parsed = parsed.replace(year=today.year)
             if parsed < today:
                 parsed = parsed.replace(year=today.year + 1)
         return parsed
+
     raise ValueError(f"Couldn't understand the date '{s}'. Use YYYY-MM-DD.")
 
 
 def parse_datetime(s: str, today: date, tz: tzinfo) -> datetime:
-    """Accepts 'YYYY-MM-DD HH:MM', ISO, or '<date words> <time>' like 'thursday 4:30pm'."""
+    """Parse combined date and time string.
+
+    Accepts:
+        - ISO: '2026-10-08 16:30' or '2026-10-08T16:30:00'
+        - Natural: 'thursday 4:30pm', 'tomorrow at 3pm', 'Oct 8 at 10:00 AM'
+    """
     raw = (s or "").strip()
+
+    # Try standard ISO parsing first
     try:
         dt = datetime.fromisoformat(raw.replace(" ", "T", 1))
         return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt.astimezone(tz)
     except ValueError:
         pass
-    m = re.match(r"^(.*?)[\s,@]+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)$", raw, re.I)
-    if not m:
+
+    # Match '<date portion> [at] <time portion>'
+    match = re.match(r"^(.*?)[\s,@]+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)$", raw, re.IGNORECASE)
+    if not match:
         raise ValueError(f"Couldn't understand the date/time '{s}'. Use 'YYYY-MM-DD HH:MM'.")
-    d = parse_date(re.sub(r"\s+at$", "", m.group(1).strip(), flags=re.I), today)
-    return datetime.combine(d, parse_time(m.group(2)), tzinfo=tz)
+
+    date_part_str = re.sub(r"\s+at$", "", match.group(1).strip(), flags=re.IGNORECASE)
+    time_part_str = match.group(2)
+
+    parsed_date = parse_date(date_part_str, today)
+    parsed_time = parse_time(time_part_str)
+
+    return datetime.combine(parsed_date, parsed_time, tzinfo=tz)

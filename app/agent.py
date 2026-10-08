@@ -1,4 +1,12 @@
-"""Phase 1 agent: tool-calling loop over any OpenAI-compatible chat API (Gemini by default)."""
+"""AI Receptionist Agent: Tool-calling loop over OpenAI-compatible chat API (Gemini).
+
+This module runs the conversational agent for Phase 1 (Text Chat):
+1. Accepts user messages.
+2. Calls the LLM with system prompt + business tools.
+3. If the LLM requests a tool (e.g. check availability, book appointment),
+   executes the Python tool and sends the result back to the LLM.
+4. Returns the final natural language answer to the user.
+"""
 from __future__ import annotations
 
 import json
@@ -17,133 +25,215 @@ from app.state import SessionState, get_state
 from app.tools.registry import dispatch, openai_tools
 
 log = logging.getLogger(__name__)
-MAX_HOPS = 8
+
+# Max tool round-trips allowed in a single user turn to prevent infinite loops
+MAX_TOOL_HOPS = 8
 
 
 @dataclass
 class ChatSession:
+    """Holds conversation history and tracking state for an active chat session."""
     state: SessionState
     messages: List[Dict[str, Any]] = field(default_factory=list)
 
 
-_SESSIONS: Dict[str, ChatSession] = {}
+# In-memory dictionary of active chat sessions: {session_id: ChatSession}
+_ACTIVE_SESSIONS: Dict[str, ChatSession] = {}
+_SESSIONS = _ACTIVE_SESSIONS  # Backwards-compatible alias for unit test inspection
 
 
-def _session(session_id: str) -> ChatSession:
-    s = _SESSIONS.get(session_id)
-    if s is None:
-        s = _SESSIONS[session_id] = ChatSession(
+def get_or_create_session(session_id: str) -> ChatSession:
+    """Retrieve existing chat session or initialize a new one with the system prompt."""
+    session = _ACTIVE_SESSIONS.get(session_id)
+    if session is None:
+        session = ChatSession(
             state=get_state(session_id, channel="chat"),
             messages=[{"role": "system", "content": build_prompt("chat")}],
         )
-    return s
+        _ACTIVE_SESSIONS[session_id] = session
+    return session
 
 
-def _trimmed_messages(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Trim old messages to prevent latency degradation while preserving system prompt.
+
+    Keeps the first message (system instructions) plus the 14 most recent messages.
+    Ensures the tail never starts with an orphaned tool response.
+    """
     if len(messages) <= 16:
         return messages
-    sys_msg = messages[0]
-    tail = messages[-14:]
-    while tail and tail[0].get("role") == "tool":
-        tail = tail[1:]
-    return [sys_msg] + tail
+
+    system_message = messages[0]
+    recent_tail = messages[-14:]
+
+    # An OpenAI tool message must follow an assistant message with tool_calls
+    while recent_tail and recent_tail[0].get("role") == "tool":
+        recent_tail = recent_tail[1:]
+
+    return [system_message] + recent_tail
 
 
-def _complete(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-    url = settings.llm_base_url.rstrip("/") + "/chat/completions"
-    payload = {"model": settings.llm_model, "messages": _trimmed_messages(messages), "tools": openai_tools(),
-               "tool_choice": "auto", "temperature": 0.2}
+def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Send HTTP request to OpenAI-compatible chat completions endpoint (with retries)."""
+    endpoint_url = settings.llm_base_url.rstrip("/") + "/chat/completions"
+    payload = {
+        "model": settings.llm_model,
+        "messages": _trim_history_if_needed(messages),
+        "tools": openai_tools(),
+        "tool_choice": "auto",
+        "temperature": 0.2,
+    }
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
-    resp = None
+
+    # Exponential backoff retry loop for rate limits (429) or transient server errors
+    response = None
     for attempt in range(5):
-        resp = httpx.post(url, json=payload, headers=headers, timeout=90)
-        if resp.status_code in (429, 500, 502, 503, 504):
-            wait = 2 ** attempt * 2
-            log.warning("LLM %s, retrying in %ss: %s", resp.status_code, wait, resp.text[:200])
-            time.sleep(wait)
+        response = httpx.post(endpoint_url, json=payload, headers=headers, timeout=90)
+        if response.status_code in (429, 500, 502, 503, 504):
+            wait_seconds = (2 ** attempt) * 2
+            log.warning("LLM %s, retrying in %ds...", response.status_code, wait_seconds)
+            time.sleep(wait_seconds)
             continue
         break
-    if resp.status_code >= 400:
-        raise RuntimeError(f"LLM error {resp.status_code}: {resp.text[:500]}")
-    return resp.json()
+
+    if response.status_code >= 400:
+        raise RuntimeError(f"LLM API error ({response.status_code}): {response.text[:500]}")
+
+    return response.json()
 
 
-NUM_WORDS = {
+_complete = _call_llm  # Backwards-compatible alias for unit test mocking
+
+
+NUMBER_WORDS = {
     "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
     "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
 }
 
 
-def _user_provided_digits(messages: List[Dict[str, Any]]) -> str:
-    text = " ".join(m.get("content", "").lower() for m in messages if m.get("role") == "user")
-    for word, d in NUM_WORDS.items():
-        text = re.sub(rf"\b{word}\b", d, text)
-    return "".join(re.findall(r"\d", text))
+def _extract_user_provided_digits(messages: List[Dict[str, Any]]) -> str:
+    """Extract all digits explicitly spoken/typed by the human caller.
+
+    Protects against LLM phone number hallucination by checking that the digits
+    passed to book_appointment were actually stated by the user.
+    """
+    user_text = " ".join(
+        msg.get("content", "").lower()
+        for msg in messages
+        if msg.get("role") == "user"
+    )
+
+    # Convert spoken word numbers ("four one five...") to digits
+    for word, digit in NUMBER_WORDS.items():
+        user_text = re.sub(rf"\b{word}\b", digit, user_text)
+
+    # Extract all digits
+    return "".join(re.findall(r"\d", user_text))
 
 
-def _run(sess: ChatSession) -> Dict[str, Any]:
-    trace: List[Dict[str, Any]] = []
-    for _ in range(MAX_HOPS):
-        msg = _complete(sess.messages)["choices"][0]["message"]
-        tool_calls = msg.get("tool_calls") or []
-        for tc in tool_calls:
-            tc["id"] = tc.get("id") or f"call_{uuid.uuid4().hex[:12]}"
-        clean = {k: v for k, v in msg.items() if v is not None}
-        clean["role"] = "assistant"
-        sess.messages.append(clean)
+def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
+    """Execute one turn of conversation, running tools in a loop until LLM produces text."""
+    execution_trace: List[Dict[str, Any]] = []
+
+    for _ in range(MAX_TOOL_HOPS):
+        # 1. Ask LLM for next action
+        response_json = _complete(session.messages)
+        assistant_message = response_json["choices"][0]["message"]
+        tool_calls = assistant_message.get("tool_calls") or []
+
+        # Ensure every tool call has an ID
+        for call in tool_calls:
+            call["id"] = call.get("id") or f"call_{uuid.uuid4().hex[:12]}"
+
+        # Record assistant response in conversation history
+        clean_assistant_message = {k: v for k, v in assistant_message.items() if v is not None}
+        clean_assistant_message["role"] = "assistant"
+        session.messages.append(clean_assistant_message)
+
+        # 2. If no tools were called, LLM produced its final conversational response
         if not tool_calls:
-            text = (msg.get("content") or "").strip()
-            if not text and trace and any(t["tool"] == "log_interaction" for t in trace):
-                text = "You're all set! Thanks for reaching out to Cedar Lane Auto Detailing, have a great day!"
-            return {"reply": text, "tools": trace}
-        for tc in tool_calls:
-            name = tc["function"]["name"]
-            try:
-                args = json.loads(tc["function"].get("arguments") or "{}")
-            except json.JSONDecodeError:
-                args = {}
+            final_text = (assistant_message.get("content") or "").strip()
+            # Fallback if logging happened with empty text
+            if not final_text and execution_trace and any(t["tool"] == "log_interaction" for t in execution_trace):
+                final_text = "You're all set! Thanks for reaching out to Cedar Lane Auto Detailing, have a great day!"
+            return {"reply": final_text, "tools": execution_trace}
 
-            if name == "book_appointment":
-                phone_digits = "".join(re.findall(r"\d", str(args.get("phone", ""))))[-10:]
-                user_digits = _user_provided_digits(sess.messages)
-                if not phone_digits or phone_digits not in user_digits:
-                    result = {
+        # 3. LLM requested tool execution
+        for call in tool_calls:
+            tool_name = call["function"]["name"]
+            try:
+                tool_args = json.loads(call["function"].get("arguments") or "{}")
+            except json.JSONDecodeError:
+                tool_args = {}
+
+            # Strict guard against phone number hallucination
+            if tool_name == "book_appointment":
+                phone_arg_digits = "".join(re.findall(r"\d", str(tool_args.get("phone", ""))))[-10:]
+                actual_user_digits = _extract_user_provided_digits(session.messages)
+
+                if not phone_arg_digits or phone_arg_digits not in actual_user_digits:
+                    blocked_result = {
                         "booked": False,
                         "error": "The customer has not provided their phone number yet. Ask the customer: 'What is your phone number?'",
                     }
-                    log.warning("Rejected book_appointment with unprovided/hallucinated phone: %s", args.get("phone"))
-                    trace.append({"tool": name, "args": args, "result": result})
-                    sess.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
+                    log.warning("Blocked booking with unverified phone number: %s", tool_args.get("phone"))
+                    execution_trace.append({"tool": tool_name, "args": tool_args, "result": blocked_result})
+                    session.messages.append({
+                        "role": "tool",
+                        "tool_call_id": call["id"],
+                        "content": json.dumps(blocked_result),
+                    })
                     continue
 
+            # Execute tool through registry
             try:
-                result = dispatch(name, args, sess.state)
+                tool_result = dispatch(tool_name, tool_args, session.state)
             except Exception as exc:  # noqa: BLE001
-                log.exception("Tool execution failed: %s", name)
-                result = {"error": f"Failed to execute {name}: {exc}"}
+                log.exception("Tool execution error in %s: %s", tool_name, exc)
+                tool_result = {"error": f"Failed to execute {tool_name}: {exc}"}
 
-            log.info("tool %s(%s) -> %s", name, args, result)
-            trace.append({"tool": name, "args": args, "result": result})
-            sess.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": json.dumps(result)})
-    return {"reply": "Sorry, I got tangled up there. Could you say that again?", "tools": trace}
+            log.info("Tool executed: %s(%s) -> %s", tool_name, tool_args, tool_result)
+            execution_trace.append({"tool": tool_name, "args": tool_args, "result": tool_result})
+
+            # Append tool result for LLM to see in the next iteration
+            session.messages.append({
+                "role": "tool",
+                "tool_call_id": call["id"],
+                "content": json.dumps(tool_result),
+            })
+
+    return {
+        "reply": "Sorry, I had trouble processing that. Could you repeat what you'd like to do?",
+        "tools": execution_trace,
+    }
 
 
 def chat(session_id: str, text: str) -> Dict[str, Any]:
-    sess = _session(session_id)
-    sess.messages.append({"role": "user", "content": text})
-    return _run(sess)
+    """Process incoming chat message from the user."""
+    session = get_or_create_session(session_id)
+    session.messages.append({"role": "user", "content": text})
+    return _run_conversation_turn(session)
 
 
 def end_chat(session_id: str) -> Dict[str, Any]:
-    """Caller closed the chat. Make sure the conversation is logged to the Sheet."""
-    sess = _SESSIONS.get(session_id)
-    if sess is None or len(sess.messages) <= 1:
+    """Handle chat closure when caller disconnects or closes window.
+
+    Ensures the conversation is audited and logged to Google Sheets.
+    """
+    session = _ACTIVE_SESSIONS.get(session_id)
+    if session is None or len(session.messages) <= 1:
         return {"reply": "", "tools": []}
-    out: Dict[str, Any] = {"reply": "", "tools": []}
-    if not sess.state.logged:
-        sess.messages.append({"role": "user", "content": (
-            "[SYSTEM NOTE: the caller has left the chat. Call log_interaction now for this whole conversation. "
-            "Do not reply to the caller.]")})
-        out = _run(sess)
-    _SESSIONS.pop(session_id, None)
-    return out
+
+    output: Dict[str, Any] = {"reply": "", "tools": []}
+    if not session.state.logged:
+        session.messages.append({
+            "role": "user",
+            "content": (
+                "[SYSTEM NOTE: the caller has left the chat. Call log_interaction now for this whole conversation. "
+                "Do not reply to the caller.]"
+            ),
+        })
+        output = _run_conversation_turn(session)
+
+    _ACTIVE_SESSIONS.pop(session_id, None)
+    return output
