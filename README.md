@@ -14,9 +14,9 @@ The **tools, business rules and prompt live in one place** (`app/tools/registry.
 See [SETUP.md](SETUP.md) for accounts and credentials. Then:
 ```bash
 python scripts/check_setup.py && python scripts/init_sheet.py && python scripts/seed_calendar.py
-uvicorn app.main:app --port 8000      # http://localhost:8000
-pytest -q                             # offline tests (Google/LLM faked)
-python scripts/vapi_setup.py          # Phase 2: create/update the Vapi assistant
+uvicorn app.main:app --port 8000
+pytest -q
+python scripts/vapi_setup.py
 ```
 
 ## What the agent handles vs. hands off

@@ -1,4 +1,3 @@
-"""Per-conversation state (chat session id or Vapi call id)."""
 from __future__ import annotations
 
 import threading

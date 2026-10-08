@@ -30,15 +30,14 @@ cp .env.example .env
 
 ## 5. Verify, initialize, seed
 ```bash
-python scripts/check_setup.py     # all three should say OK
-python scripts/init_sheet.py      # creates Contacts + CallLog tabs
-python scripts/seed_calendar.py   # Thu 9:00, 12:30, 2:30, 3:30 booked, etc.
+python scripts/check_setup.py
+python scripts/init_sheet.py
+python scripts/seed_calendar.py
 ```
 
 ## 6. Run Phase 1
 ```bash
 uvicorn app.main:app --reload --port 8000
-# open http://localhost:8000
 ```
 
 ## 7. Phase 2 – Vapi

@@ -1,8 +1,3 @@
-"""Seed the calendar with existing bookings so conflicts/reschedules can be tested.
-
-Thursday is set up so the spec's demo works: 3:30 PM is taken (and so is 2:30), 4:30 PM is open.
-Re-running deletes previously seeded events first. Use --clear to only delete seeded events.
-"""
 import argparse
 import sys
 from datetime import datetime, timedelta

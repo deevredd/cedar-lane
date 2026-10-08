@@ -1,12 +1,3 @@
-"""AI Receptionist Agent: Tool-calling loop over OpenAI-compatible chat API (Gemini).
-
-This module runs the conversational agent for Phase 1 (Text Chat):
-1. Accepts user messages.
-2. Calls the LLM with system prompt + business tools.
-3. If the LLM requests a tool (e.g. check availability, book appointment),
-   executes the Python tool and sends the result back to the LLM.
-4. Returns the final natural language answer to the user.
-"""
 from __future__ import annotations
 
 import json
@@ -31,7 +22,6 @@ MAX_TOOL_HOPS = 8
 
 @dataclass
 class ChatSession:
-    """Holds conversation history and tracking state for an active chat session."""
     state: SessionState
     messages: List[Dict[str, Any]] = field(default_factory=list)
 
@@ -41,7 +31,6 @@ _SESSIONS = _ACTIVE_SESSIONS
 
 
 def get_or_create_session(session_id: str) -> ChatSession:
-    """Retrieve existing chat session or initialize a new one with the system prompt."""
     session = _ACTIVE_SESSIONS.get(session_id)
     if session is None:
         session = ChatSession(
@@ -53,19 +42,13 @@ def get_or_create_session(session_id: str) -> ChatSession:
 
 
 def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Trim old messages to prevent latency degradation while preserving system prompt.
-
-    Keeps the first message (system instructions) plus a recent window of messages.
-    Crucially, the tail ALWAYS starts with a USER message so that Gemini's OpenAI
-    compatibility endpoint never sees an orphaned function call turn or invalid turn order.
-    """
-    if len(messages) <= 16:
+    if len(messages) <= 10:
         return messages
 
     system_message = messages[0]
 
     target_idx = None
-    for idx in range(len(messages) - 14, 0, -1):
+    for idx in range(len(messages) - 8, 0, -1):
         if messages[idx].get("role") == "user":
             target_idx = idx
             break
@@ -83,15 +66,14 @@ _HTTP_CLIENT = httpx.Client(
 
 
 def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """Send HTTP request to OpenAI-compatible chat completions endpoint (with retries)."""
     endpoint_url = settings.llm_base_url.rstrip("/") + "/chat/completions"
     payload = {
         "model": settings.llm_model,
         "messages": _trim_history_if_needed(messages),
         "tools": openai_tools(),
         "tool_choice": "auto",
-        "temperature": 0.2,
-        "max_tokens": 250,
+        "temperature": 0.1,
+        "max_tokens": 120,
     }
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
 
@@ -121,11 +103,6 @@ NUMBER_WORDS = {
 
 
 def _extract_user_provided_digits(messages: List[Dict[str, Any]]) -> str:
-    """Extract all digits explicitly spoken/typed by the human caller.
-
-    Protects against LLM phone number hallucination by checking that the digits
-    passed to book_appointment were actually stated by the user.
-    """
     user_text = " ".join(
         msg.get("content", "").lower()
         for msg in messages
@@ -139,7 +116,6 @@ def _extract_user_provided_digits(messages: List[Dict[str, Any]]) -> str:
 
 
 def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
-    """Execute one turn of conversation, running tools in a loop until LLM produces text."""
     execution_trace: List[Dict[str, Any]] = []
 
     for _ in range(MAX_TOOL_HOPS):
@@ -207,18 +183,12 @@ def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
 
 
 def chat(session_id: str, text: str) -> Dict[str, Any]:
-    """Process incoming chat message from the user."""
     session = get_or_create_session(session_id)
     session.messages.append({"role": "user", "content": text})
     return _run_conversation_turn(session)
 
 
 def end_chat(session_id: str) -> Dict[str, Any]:
-    """Handle chat closure when caller disconnects or closes window.
-
-    Ensures the conversation is audited and logged to Google Sheets.
-    Pops the session immediately to prevent concurrent duplicate logging.
-    """
     session = _ACTIVE_SESSIONS.pop(session_id, None)
     if session is None or len(session.messages) <= 1 or session.state.logged:
         return {"reply": "", "tools": []}

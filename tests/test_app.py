@@ -1,4 +1,3 @@
-"""Offline tests for tools, agent loop and Vapi webhook (Google + LLM are faked)."""
 import json
 from datetime import datetime
 

@@ -1,8 +1,3 @@
-"""Pure date/time and appointment slot logic.
-
-This module contains deterministic scheduling and calendar calculations.
-It has zero network or Google API calls, making it 100% unit-testable locally.
-"""
 from __future__ import annotations
 
 import re
@@ -18,29 +13,24 @@ BusyTimes = Sequence[Tuple[datetime, datetime]]
 
 
 def open_hours(d: date) -> Optional[Tuple[time, time]]:
-    """Return (open_time, close_time) for a given date, or None if closed."""
     return business.HOURS.get(d.weekday())
 
 
 def overlaps(start_1: datetime, end_1: datetime, start_2: datetime, end_2: datetime) -> bool:
-    """Return True if two time intervals overlap (strictly s1 < e2 and s2 < e1)."""
     return start_1 < end_2 and start_2 < end_1
 
 
 def fmt_time(dt: datetime) -> str:
-    """Format datetime as 12-hour string, e.g. '9:00 AM' or '3:30 PM'."""
     hour = dt.hour % 12 or 12
     am_pm = "AM" if dt.hour < 12 else "PM"
     return f"{hour}:{dt.minute:02d} {am_pm}"
 
 
 def fmt_label(dt: datetime) -> str:
-    """Format full human label, e.g. 'Thursday Oct 8, 3:30 PM'."""
     return f"{dt:%A} {dt:%b} {dt.day}, {fmt_time(dt)}"
 
 
 def slot_key(dt: datetime) -> str:
-    """Standard 24-hour timestamp string for APIs and storage: 'YYYY-MM-DD HH:MM'."""
     return dt.strftime("%Y-%m-%d %H:%M")
 
 
@@ -50,12 +40,6 @@ def check_slot(
     busy: BusyTimes,
     now: datetime,
 ) -> Tuple[bool, str]:
-    """Check if a specific time slot is valid and open.
-
-    Returns:
-        (True, "") if the slot is open.
-        (False, reason_message) if the slot cannot be booked.
-    """
     end = start + timedelta(minutes=duration_min)
     hours = open_hours(start.date())
 
@@ -89,7 +73,6 @@ def candidate_starts(
     now: datetime,
     tz: tzinfo,
 ) -> List[datetime]:
-    """Generate all available appointment start times on a given date."""
     hours = open_hours(d)
     if not hours:
         return []
@@ -114,11 +97,6 @@ def nearest_alternatives(
     candidates: Sequence[datetime],
     n: int = 3,
 ) -> List[datetime]:
-    """Find the N closest available slots to the requested time.
-
-    If two slots are equally distant (e.g. 30 mins earlier vs 30 mins later),
-    we break the tie by choosing the later slot.
-    """
     def distance_from_requested(candidate: datetime):
         time_difference_seconds = abs((candidate - requested).total_seconds())
         is_earlier_penalty = 0 if candidate > requested else 1
@@ -132,14 +110,6 @@ _TIME_REGEX = re.compile(r"^(\d{1,2})(?::?(\d{2}))?(?::\d{2})?\s*(am|pm|a|p)?$")
 
 
 def parse_time(s: str) -> time:
-    """Parse human time string into a Python time object.
-
-    Handles:
-        - 24h: '15:30', '1530'
-        - 12h: '3:30 pm', '3:30pm', '3pm', '9am'
-        - Words: 'noon', 'midday'
-        - Numbers without am/pm during shop hours: 1 to 7 default to PM (e.g. 3 -> 3:00 PM).
-    """
     clean = (s or "").strip().lower().replace(".", "").replace("o'clock", "").strip()
 
     if clean in ("noon", "midday"):
@@ -167,14 +137,6 @@ def parse_time(s: str) -> time:
 
 
 def parse_date(s: str, today: date) -> date:
-    """Parse human date string relative to 'today'.
-
-    Handles:
-        - ISO: '2026-10-08'
-        - Relative: 'today', 'tonight', 'tomorrow', 'day after tomorrow'
-        - Weekdays: 'thursday', 'next friday', 'wed'
-        - Natural: 'Oct 8', 'October 8', '10/8', '10/8/2026'
-    """
     text = (s or "").strip().lower().rstrip(".,")
 
     if text in ("today", "tonight"):
@@ -226,12 +188,6 @@ def parse_date(s: str, today: date) -> date:
 
 
 def parse_datetime(s: str, today: date, tz: tzinfo) -> datetime:
-    """Parse combined date and time string.
-
-    Accepts:
-        - ISO: '2026-10-08 16:30' or '2026-10-08T16:30:00'
-        - Natural: 'thursday 4:30pm', 'tomorrow at 3pm', 'Oct 8 at 10:00 AM'
-    """
     raw = (s or "").strip()
 
     try:

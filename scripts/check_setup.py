@@ -1,4 +1,3 @@
-"""Verify credentials and access: Calendar, Sheet, LLM. Run this first after filling in .env."""
 import sys
 from pathlib import Path
 

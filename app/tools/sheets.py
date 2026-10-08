@@ -1,9 +1,3 @@
-"""Google Sheets CRM integrations.
-
-Manages two tabs in the shop spreadsheet:
-1. 'Contacts': One row per customer (identified by their unique E.164 phone number).
-2. 'CallLog': Chronological audit trail of all conversations and AI interactions.
-"""
 from __future__ import annotations
 
 import logging
@@ -51,12 +45,10 @@ _cached_spreadsheet = None
 
 
 def _column_letter(column_number: int) -> str:
-    """Convert 1-based column number to letter (e.g. 1 -> 'A', 8 -> 'H', 10 -> 'J')."""
     return chr(ord("A") + column_number - 1)
 
 
 def get_spreadsheet():
-    """Return authorized gspread Spreadsheet instance (cached)."""
     global _cached_spreadsheet
     if _cached_spreadsheet is None:
         credentials = get_credentials()
@@ -69,12 +61,10 @@ def _get_worksheet(title: str):
 
 
 def _current_timestamp() -> str:
-    """Return current shop time formatted as 'YYYY-MM-DD HH:MM'."""
     return datetime.now(settings.tz).strftime("%Y-%m-%d %H:%M")
 
 
 def _row_number_from_response(append_response: dict) -> int:
-    """Extract inserted row index from gspread append response."""
     updated_range = ((append_response or {}).get("updates") or {}).get("updatedRange", "")
     match = re.search(r"![A-Z]+(\d+)", updated_range)
     return int(match.group(1)) if match else 0
@@ -88,11 +78,6 @@ def upsert_contact(
     note: Optional[str] = None,
     increment_interactions: bool = False,
 ) -> int:
-    """Create or update a customer record in the 'Contacts' sheet.
-
-    Keyed by customer's phone number in E.164 format.
-    Returns the updated or created row number.
-    """
     with _sheet_lock:
         worksheet = _get_worksheet(CONTACTS_TAB)
         existing_phones = worksheet.col_values(1)
@@ -148,12 +133,6 @@ def log_interaction(
     needs_followup: bool,
     row: Optional[int] = None,
 ) -> int:
-    """Record an interaction in the 'CallLog' tab.
-
-    If 'row' is provided, updates that existing log row in-place (used to avoid duplicate rows).
-    Otherwise, appends a new row.
-    Returns the target row number.
-    """
     with _sheet_lock:
         worksheet = _get_worksheet(CALLLOG_TAB)
         row_data = [

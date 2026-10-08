@@ -1,4 +1,3 @@
-"""Tool schemas (OpenAI function format) + dispatcher. Used by the chat agent AND the Vapi webhook."""
 from __future__ import annotations
 
 import logging

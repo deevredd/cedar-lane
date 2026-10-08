@@ -1,4 +1,3 @@
-"""Google service-account credentials shared by Calendar and Sheets."""
 from __future__ import annotations
 
 import json

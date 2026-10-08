@@ -1,4 +1,3 @@
-"""Single source of truth for Cedar Lane Auto Detailing's business rules."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -88,4 +87,4 @@ BUSINESS_INFO = {
 
 
 def business_info_text() -> str:
-    return "\n\n".join(f"## {k.replace('_', ' ').title()}\n{v}" for k, v in BUSINESS_INFO.items())
+    return "\n\n".join(f"[{k.replace('_', ' ').title().upper()}]:\n{v}" for k, v in BUSINESS_INFO.items())

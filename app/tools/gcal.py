@@ -1,13 +1,3 @@
-"""Google Calendar integrations: availability checking, booking, and appointment management.
-
-This module communicates with the Google Calendar API:
-1. 'check_availability': Queries open slots and finds nearest alternatives if full.
-2. 'book_appointment': Books single-bay detailing slots with atomic locks to prevent race conditions.
-3. 'find_appointments': Looks up upcoming bookings by customer's phone number.
-4. 'reschedule_appointment': Validates new time and updates the calendar event.
-5. 'cancel_appointment': Removes an appointment from the calendar.
-6. 'add_note_to_appointment': Appends customer notes (e.g. running late).
-"""
 from __future__ import annotations
 
 import logging
@@ -31,7 +21,6 @@ _booking_lock = threading.Lock()
 
 
 def _get_calendar_service():
-    """Return an authenticated Google Calendar API client for the current thread."""
     if getattr(_thread_local, "api", None) is None:
         credentials = get_credentials()
         _thread_local.api = build("calendar", "v3", credentials=credentials, cache_discovery=False)
@@ -39,17 +28,14 @@ def _get_calendar_service():
 
 
 def now() -> datetime:
-    """Return the current datetime in the shop's local timezone (Pacific Time)."""
     return datetime.now(settings.tz)
 
 
 def _parse_iso_datetime(iso_string: str) -> datetime:
-    """Parse ISO datetime string from Google Calendar and convert to shop timezone."""
     return datetime.fromisoformat(iso_string.replace("Z", "+00:00")).astimezone(settings.tz)
 
 
 def event_bounds(event: Dict[str, Any]) -> Tuple[datetime, datetime]:
-    """Extract (start_dt, end_dt) from a Google Calendar event object."""
     start_info = event["start"]
     end_info = event["end"]
 
@@ -63,7 +49,6 @@ def event_bounds(event: Dict[str, Any]) -> Tuple[datetime, datetime]:
 
 
 def list_events(start_dt: datetime, end_dt: datetime, **extra_query_params) -> List[Dict[str, Any]]:
-    """Fetch calendar events within a datetime range, handling pagination automatically."""
     calendar_service = _get_calendar_service()
     all_events: List[Dict[str, Any]] = []
     page_token = None
@@ -99,16 +84,14 @@ _BUSY_CACHE: Dict[date, Tuple[float, List[Tuple[datetime, datetime]]]] = {}
 
 
 def invalidate_calendar_cache():
-    """Clear cached busy ranges upon new booking, reschedule, or cancellation."""
     _BUSY_CACHE.clear()
 
 
 def _day_busy(target_date: date, exclude_id: Optional[str] = None) -> List[Tuple[datetime, datetime]]:
-    """Return list of (start, end) time ranges already booked on target_date."""
     now_ts = _py_time.time()
     if not exclude_id and target_date in _BUSY_CACHE:
         cached_ts, cached_events = _BUSY_CACHE[target_date]
-        if now_ts - cached_ts < 30.0:
+        if now_ts - cached_ts < 180.0:
             return cached_events
 
     day_start = datetime.combine(target_date, time(0), tzinfo=settings.tz)
@@ -123,7 +106,6 @@ def _day_busy(target_date: date, exclude_id: Optional[str] = None) -> List[Tuple
 
 
 def _format_slot_dict(dt: datetime) -> Dict[str, str]:
-    """Format datetime into standard slot dict with machine key and human label."""
     return {
         "start": scheduling.slot_key(dt),
         "label": scheduling.fmt_label(dt),
@@ -136,7 +118,6 @@ def _find_next_available_day(
     lookahead_days: int = 10,
     exclude_id: Optional[str] = None,
 ) -> Optional[Dict[str, Any]]:
-    """Scan upcoming days until an open day with valid slots is found."""
     for day_offset in range(lookahead_days):
         check_date = from_date + timedelta(days=day_offset)
         if not scheduling.open_hours(check_date):
@@ -159,7 +140,6 @@ def _build_alternatives_dict(
     busy_times: List[Tuple[datetime, datetime]],
     exclude_id: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Find nearby alternative slots on the same day, or suggest the next open day."""
     all_open_today = scheduling.candidate_starts(requested_dt.date(), duration_min, busy_times, now(), settings.tz)
     nearby_slots = scheduling.nearest_alternatives(requested_dt, all_open_today, n=3)
 
@@ -176,11 +156,6 @@ def _build_alternatives_dict(
 
 
 def check_availability(service: str, date: str, time: Optional[str] = None) -> Dict[str, Any]:
-    """Check if a service can be booked on a given date and time.
-
-    If the requested slot is full, returns the closest open alternative slots.
-    If 'time' is omitted, returns all open start times for that entire date.
-    """
     service_info = business.get_service(service)
     today = now().date()
     target_date = scheduling.parse_date(date, today)
@@ -246,7 +221,6 @@ def book_appointment(
     notes: Optional[str] = None,
     channel: str = "chat",
 ) -> Dict[str, Any]:
-    """Book a new appointment on Google Calendar and sync customer into Sheets CRM."""
     service_info = business.get_service(service)
     e164_phone = normalize_phone(phone)
     start_dt = scheduling.parse_datetime(start, now().date(), settings.tz)
@@ -310,7 +284,6 @@ def book_appointment(
 
 
 def _summarize_event(event: Dict[str, Any]) -> Dict[str, Any]:
-    """Convert raw Google Calendar event into a concise appointment summary."""
     start_dt, end_dt = event_bounds(event)
     private_props = (event.get("extendedProperties") or {}).get("private") or {}
     duration_mins = int((end_dt - start_dt).total_seconds() // 60)
@@ -327,7 +300,6 @@ def _summarize_event(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def _upcoming_appointments_for(e164_phone: str) -> List[Dict[str, Any]]:
-    """Look up all upcoming appointments matching the customer's phone number."""
     events = list_events(
         now(),
         now() + timedelta(days=120),
@@ -337,7 +309,6 @@ def _upcoming_appointments_for(e164_phone: str) -> List[Dict[str, Any]]:
 
 
 def find_appointments(phone: str) -> Dict[str, Any]:
-    """Search for existing upcoming appointments by customer phone number."""
     e164_phone = normalize_phone(phone)
     appointments = _upcoming_appointments_for(e164_phone)
 
@@ -352,14 +323,12 @@ def find_appointments(phone: str) -> Dict[str, Any]:
 
 
 def _fetch_event(event_id: str) -> Dict[str, Any]:
-    """Fetch single event by its Google Calendar ID."""
     return _get_calendar_service().events().get(
         calendarId=settings.calendar_id, eventId=event_id
     ).execute()
 
 
 def reschedule_appointment(event_id: str, new_start: str) -> Dict[str, Any]:
-    """Move an existing appointment to a new date and time."""
     existing_event = _fetch_event(event_id)
     old_start, old_end = event_bounds(existing_event)
     duration_mins = int((old_end - old_start).total_seconds() // 60)
@@ -410,7 +379,6 @@ def reschedule_appointment(event_id: str, new_start: str) -> Dict[str, Any]:
 
 
 def cancel_appointment(event_id: str) -> Dict[str, Any]:
-    """Delete an appointment from Google Calendar."""
     existing_event = _fetch_event(event_id)
     start_dt, _ = event_bounds(existing_event)
 
@@ -434,7 +402,6 @@ def cancel_appointment(event_id: str) -> Dict[str, Any]:
 
 
 def add_note_to_appointment(event_id: str, note: str) -> Dict[str, Any]:
-    """Append a customer note (e.g. 'Running 15 mins late') to the appointment description."""
     existing_event = _fetch_event(event_id)
     timestamp = now().strftime("%b %d %I:%M %p")
     updated_description = (existing_event.get("description") or "") + f"\n[{timestamp}] {note}"
@@ -453,11 +420,6 @@ def add_note_to_appointment(event_id: str, note: str) -> Dict[str, Any]:
 
 
 def sync_contact(e164_phone: str, name: Optional[str] = None, vehicle: Optional[str] = None) -> Dict[str, Any]:
-    """Update upcoming appointment in Google Sheets Contacts tab asynchronously in the background.
-
-    Running in a background thread eliminates 3-4 seconds of blocking latency so the customer
-    receives an instant booking confirmation.
-    """
     def _run_background_sync():
         try:
             upcoming_appointments = _upcoming_appointments_for(e164_phone)

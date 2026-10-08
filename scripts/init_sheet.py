@@ -1,4 +1,3 @@
-"""Create the Contacts and CallLog tabs with headers. Safe to re-run."""
 import sys
 from pathlib import Path
 

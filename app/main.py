@@ -1,4 +1,3 @@
-"""FastAPI app: Phase 1 chat API + UI, Phase 2 Vapi webhook."""
 from __future__ import annotations
 
 import json

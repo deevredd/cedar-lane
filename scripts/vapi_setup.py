@@ -1,7 +1,3 @@
-"""Create or update the Vapi assistant (config as code). Re-run after any prompt/tool change.
-
-Requires VAPI_API_KEY and PUBLIC_BASE_URL (e.g. your ngrok https URL) in .env.
-"""
 import json
 import sys
 from pathlib import Path
