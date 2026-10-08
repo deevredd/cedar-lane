@@ -95,6 +95,7 @@ def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
         "tools": openai_tools(),
         "tool_choice": "auto",
         "temperature": 0.2,
+        "max_tokens": 250,
     }
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
 
