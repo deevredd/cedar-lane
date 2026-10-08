@@ -39,15 +39,32 @@ function tools(list) {
     log.appendChild(d);
   }
 }
-async function post(path, message) {
-  const r = await fetch(path, {method: 'POST', headers: {'Content-Type': 'application/json'},
-                               body: JSON.stringify({session_id: sid, message})});
+async function post(path, message, explicitSessionId) {
+  const currentSession = explicitSessionId || sid;
+  const r = await fetch(path, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({session_id: currentSession, message})
+  });
   if (!r.ok) throw new Error(await r.text());
   return r.json();
 }
+
+const sendBtn = document.querySelector('#f button:not(#end)');
+const endBtn = document.getElementById('end');
+
 document.getElementById('f').onsubmit = async (e) => {
-  e.preventDefault(); const msg = t.value.trim(); if (!msg) return;
-  t.value = ''; add('user', msg); add('agent', '…');
+  e.preventDefault();
+  const msg = t.value.trim();
+  if (!msg) return;
+
+  t.value = '';
+  t.disabled = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  add('user', msg);
+  add('agent', '… (thinking)');
+
   try {
     const r = await post('/api/chat', msg);
     log.lastChild.remove();
@@ -56,11 +73,32 @@ document.getElementById('f').onsubmit = async (e) => {
   } catch (err) {
     log.lastChild.remove();
     add('agent', 'Error: ' + err.message);
+  } finally {
+    t.disabled = false;
+    if (sendBtn) sendBtn.disabled = false;
+    t.focus();
   }
 };
-document.getElementById('end').onclick = async () => {
-  try { const r = await post('/api/end', ''); tools(r.tools); } catch (err) { add('agent', 'Error: ' + err.message); }
-  add('agent', '— chat ended & logged. New conversation started —'); sid = crypto.randomUUID();
+
+endBtn.onclick = async () => {
+  if (endBtn.disabled) return;
+  endBtn.disabled = true;
+  endBtn.textContent = 'Ending…';
+
+  const endingSid = sid;
+  sid = crypto.randomUUID(); // Immediately start fresh session for subsequent chat
+
+  try {
+    const r = await post('/api/end', '', endingSid);
+    tools(r.tools);
+  } catch (err) {
+    console.warn('End chat error:', err);
+  } finally {
+    add('agent', '— chat ended & logged. New conversation started —');
+    endBtn.disabled = false;
+    endBtn.textContent = 'End chat';
+    t.focus();
+  }
 };
 </script>
 </body>

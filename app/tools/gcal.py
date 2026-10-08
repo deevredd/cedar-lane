@@ -446,20 +446,26 @@ def add_note_to_appointment(event_id: str, note: str) -> Dict[str, Any]:
 
 
 def sync_contact(e164_phone: str, name: Optional[str] = None, vehicle: Optional[str] = None) -> Dict[str, Any]:
-    """Update upcoming appointment in Google Sheets Contacts tab. Never fails the calendar booking."""
-    try:
-        upcoming_appointments = _upcoming_appointments_for(e164_phone)
-        formatted_appointments = "; ".join(
-            f"{appt['when']} ({appt['title'].split(' – ')[0]})"
-            for appt in upcoming_appointments
-        )
-        sheets.upsert_contact(
-            e164_phone,
-            name=name,
-            vehicle=vehicle,
-            upcoming=formatted_appointments,
-        )
-        return {}
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Contact sheet sync failed")
-        return {"warning": f"Contact sheet update failed: {exc}"}
+    """Update upcoming appointment in Google Sheets Contacts tab asynchronously in the background.
+
+    Running in a background thread eliminates 3-4 seconds of blocking latency so the customer
+    receives an instant booking confirmation.
+    """
+    def _run_background_sync():
+        try:
+            upcoming_appointments = _upcoming_appointments_for(e164_phone)
+            formatted_appointments = "; ".join(
+                f"{appt['when']} ({appt['title'].split(' – ')[0]})"
+                for appt in upcoming_appointments
+            )
+            sheets.upsert_contact(
+                e164_phone,
+                name=name,
+                vehicle=vehicle,
+                upcoming=formatted_appointments,
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Background contact sheet sync failed: %s", exc)
+
+    threading.Thread(target=_run_background_sync, daemon=True).start()
+    return {}

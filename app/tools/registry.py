@@ -149,18 +149,28 @@ def log_interaction_for(st: SessionState, name: str = "", phone: str = "", inten
         e164 = normalize_phone(raw_phone) if raw_phone else ""
     except ValueError:
         e164 = raw_phone
-    name = name or st.name or ""
+    caller_name = name or st.name or ""
     first = not st.logged
-    st.log_row = sheets.log_interaction(
-        session_id=st.session_id, channel=st.channel, phone=e164 or "unknown", name=name, intent=intent,
-        summary=summary, outcome=outcome, event_ids=", ".join(st.event_ids), needs_followup=bool(needs_followup),
-        row=st.log_row,
-    )
-    if e164.startswith("+"):
-        note = f"FOLLOW UP: {summary}" if needs_followup else None
-        sheets.upsert_contact(e164, name=name or None, note=note if first or needs_followup else None,
-                              increment_interactions=first)
     st.logged = True
+
+    # Run heavy Google Sheets network write in a background daemon thread
+    import threading
+
+    def _do_sheet_write():
+        try:
+            st.log_row = sheets.log_interaction(
+                session_id=st.session_id, channel=st.channel, phone=e164 or "unknown", name=caller_name, intent=intent,
+                summary=summary, outcome=outcome, event_ids=", ".join(st.event_ids), needs_followup=bool(needs_followup),
+                row=st.log_row,
+            )
+            if e164.startswith("+"):
+                note = f"FOLLOW UP: {summary}" if needs_followup else None
+                sheets.upsert_contact(e164, name=caller_name or None, note=note if first or needs_followup else None,
+                                      increment_interactions=first)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Background interaction logging failed: %s", exc)
+
+    threading.Thread(target=_do_sheet_write, daemon=True).start()
     return {"logged": True}
 
 

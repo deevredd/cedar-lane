@@ -57,20 +57,26 @@ def get_or_create_session(session_id: str) -> ChatSession:
 def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Trim old messages to prevent latency degradation while preserving system prompt.
 
-    Keeps the first message (system instructions) plus the 14 most recent messages.
-    Ensures the tail never starts with an orphaned tool response.
+    Keeps the first message (system instructions) plus a recent window of messages.
+    Crucially, the tail ALWAYS starts with a USER message so that Gemini's OpenAI
+    compatibility endpoint never sees an orphaned function call turn or invalid turn order.
     """
     if len(messages) <= 16:
         return messages
 
     system_message = messages[0]
-    recent_tail = messages[-14:]
 
-    # An OpenAI tool message must follow an assistant message with tool_calls
-    while recent_tail and recent_tail[0].get("role") == "tool":
-        recent_tail = recent_tail[1:]
+    # Find the earliest USER message starting from 14 messages back
+    target_idx = None
+    for idx in range(len(messages) - 14, 0, -1):
+        if messages[idx].get("role") == "user":
+            target_idx = idx
+            break
 
-    return [system_message] + recent_tail
+    if target_idx is not None:
+        return [system_message] + messages[target_idx:]
+
+    return messages
 
 
 def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -219,13 +225,14 @@ def end_chat(session_id: str) -> Dict[str, Any]:
     """Handle chat closure when caller disconnects or closes window.
 
     Ensures the conversation is audited and logged to Google Sheets.
+    Pops the session immediately to prevent concurrent duplicate logging.
     """
-    session = _ACTIVE_SESSIONS.get(session_id)
-    if session is None or len(session.messages) <= 1:
+    session = _ACTIVE_SESSIONS.pop(session_id, None)
+    if session is None or len(session.messages) <= 1 or session.state.logged:
         return {"reply": "", "tools": []}
 
     output: Dict[str, Any] = {"reply": "", "tools": []}
-    if not session.state.logged:
+    try:
         session.messages.append({
             "role": "user",
             "content": (
@@ -234,6 +241,7 @@ def end_chat(session_id: str) -> Dict[str, Any]:
             ),
         })
         output = _run_conversation_turn(session)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Graceful recovery during end_chat logging: %s", exc)
 
-    _ACTIVE_SESSIONS.pop(session_id, None)
     return output
