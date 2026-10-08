@@ -4,16 +4,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # noqa: E402
+import httpx
 
-from app.config import settings  # noqa: E402
+from app.config import settings
 
 
 def check(label, fn):
     try:
         print(f"[ OK ] {label}: {fn()}")
         return True
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         print(f"[FAIL] {label}: {exc}")
         return False
 

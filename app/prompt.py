@@ -73,7 +73,6 @@ def chat_today_block() -> str:
 
 
 def voice_today_block() -> str:
-    # Rendered by Vapi's Liquid templating at call time, so the date is always current.
     tz = settings.shop_timezone
     return ('Right now it is {{"now" | date: "%A, %B %d, %Y, %I:%M %p", "' + tz + '"}} shop time.\n'
             "When a caller says a weekday like 'Thursday', pass the weekday name (e.g. 'thursday') or 'tomorrow' as the "

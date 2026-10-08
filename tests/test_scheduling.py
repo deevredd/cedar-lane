@@ -16,7 +16,6 @@ def at(d, hh, mm=0):
     return datetime(d.year, d.month, d.day, hh, mm, tzinfo=TZ)
 
 
-# Seeded Thursday: 9-12, 12:30-13:30, 14:30-15:30, 15:30-16:30
 THU_BUSY = [(at(THU, 9), at(THU, 12)), (at(THU, 12, 30), at(THU, 13, 30)),
             (at(THU, 14, 30), at(THU, 15, 30)), (at(THU, 15, 30), at(THU, 16, 30))]
 
@@ -62,11 +61,11 @@ def test_candidates_respect_hours_and_conflicts():
 
 
 def test_boundaries():
-    assert s.check_slot(at(THU, 13, 30), 60, THU_BUSY, NOW)[0]  # back-to-back ok
-    assert not s.check_slot(at(THU, 17, 30), 60, THU_BUSY, NOW)[0]  # runs past close
-    assert not s.check_slot(at(THU, 7, 30), 30, THU_BUSY, NOW)[0]  # before open
-    assert not s.check_slot(at(date(2026, 10, 11), 10), 30, [], NOW)[0]  # Sunday
-    assert not s.check_slot(at(WED, 9), 30, [], NOW)[0]  # past
+    assert s.check_slot(at(THU, 13, 30), 60, THU_BUSY, NOW)[0]
+    assert not s.check_slot(at(THU, 17, 30), 60, THU_BUSY, NOW)[0]
+    assert not s.check_slot(at(THU, 7, 30), 30, THU_BUSY, NOW)[0]
+    assert not s.check_slot(at(date(2026, 10, 11), 10), 30, [], NOW)[0]
+    assert not s.check_slot(at(WED, 9), 30, [], NOW)[0]
     assert s.candidate_starts(date(2026, 10, 11), 30, [], NOW, TZ) == []
 
 

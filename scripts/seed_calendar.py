@@ -10,12 +10,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import business, scheduling  # noqa: E402
-from app.config import settings  # noqa: E402
-from app.phone import format_phone  # noqa: E402
-from app.tools import gcal, sheets  # noqa: E402
+from app import business, scheduling
+from app.config import settings
+from app.phone import format_phone
+from app.tools import gcal, sheets
 
-# Minimal seed: 2:30 and 3:30 booked so 3:30 is full and 4:30 is the immediate alternative
 SEED = [
     ("thursday", "14:30", "interior_detail_and_wash", "Priya Shah", "+14155550113", "Tesla Model Y"),
     ("thursday", "15:30", "interior_detail_and_wash", "Mike Torres", "+14155550114", "Ford F-150"),
@@ -35,7 +34,7 @@ def seed(with_sheet: bool):
     for day, hhmm, svc_key, name, phone, vehicle in SEED:
         svc = business.SERVICES[svc_key]
         d = scheduling.parse_date(day, today)
-        if d == today:  # don't seed into the past; push to next week
+        if d == today:
             d += timedelta(days=7)
         start = datetime.combine(d, scheduling.parse_time(hhmm), tzinfo=settings.tz)
         end = start + timedelta(minutes=svc.duration_min)

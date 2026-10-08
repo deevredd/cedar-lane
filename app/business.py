@@ -33,14 +33,12 @@ SERVICES: Dict[str, Service] = {
     ]
 }
 
-# Things we talk about but do not book directly -> human handoff.
 QUOTE_ONLY = {
     "ceramic_coating": "Ceramic coating starts at $800 and takes a full day. The owner quotes these personally after seeing the car.",
 }
 
 LARGE_VEHICLE_SURCHARGE = 25
 
-# weekday() -> (open, close). Monday=0 ... Sunday=6.
 HOURS: Dict[int, Optional[Tuple[time, time]]] = {
     0: (time(8), time(18)),
     1: (time(8), time(18)),

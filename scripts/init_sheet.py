@@ -4,13 +4,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.tools import sheets  # noqa: E402
+from app.tools import sheets
 
 
 def ensure_tab(sh, title, headers):
     try:
         ws = sh.worksheet(title)
-    except Exception:  # gspread.WorksheetNotFound
+    except Exception:
         ws = sh.add_worksheet(title=title, rows=1000, cols=len(headers))
         print(f"created tab {title}")
     ws.update(range_name="A1", values=[headers], value_input_option="RAW")

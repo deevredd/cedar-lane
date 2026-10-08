@@ -11,11 +11,9 @@ from typing import List, Optional, Sequence, Tuple
 
 from app import business
 
-# Appointment slots start every 30 minutes on the hour and half-hour (:00, :30)
 SLOT_STEP_MIN = 30
 WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
-# Sequence of (start_datetime, end_datetime) for existing booked appointments
 BusyTimes = Sequence[Tuple[datetime, datetime]]
 
 
@@ -61,7 +59,6 @@ def check_slot(
     end = start + timedelta(minutes=duration_min)
     hours = open_hours(start.date())
 
-    # 1. Check if the shop is open on this day of the week
     if hours is None:
         return False, f"We're closed on {start:%A}s."
 
@@ -69,19 +66,15 @@ def check_slot(
     open_dt = datetime.combine(start.date(), open_time, tzinfo=start.tzinfo)
     close_dt = datetime.combine(start.date(), close_time, tzinfo=start.tzinfo)
 
-    # 2. Check if requested time is in the past
     if start <= now:
         return False, "That time has already passed."
 
-    # 3. Check if start time falls within operating hours
     if start < open_dt or start >= close_dt:
         return False, f"That's outside business hours ({fmt_time(open_dt)} to {fmt_time(close_dt)})."
 
-    # 4. Check if service would run past closing time
     if end > close_dt:
         return False, f"This service takes {duration_min} minutes and would run past closing at {fmt_time(close_dt)}."
 
-    # 5. Check for conflicts with existing calendar bookings (single-bay shop)
     for busy_start, busy_end in busy:
         if overlaps(start, end, busy_start, busy_end):
             return False, "That time is already booked."
@@ -107,7 +100,6 @@ def candidate_starts(
 
     available_slots: List[datetime] = []
 
-    # Step through every 30-minute interval across the workday
     while current_slot + timedelta(minutes=duration_min) <= closing_time:
         is_open, _ = check_slot(current_slot, duration_min, busy, now)
         if is_open:
@@ -129,7 +121,6 @@ def nearest_alternatives(
     """
     def distance_from_requested(candidate: datetime):
         time_difference_seconds = abs((candidate - requested).total_seconds())
-        # Tie-breaker: 0 for slots after requested, 1 for slots before requested
         is_earlier_penalty = 0 if candidate > requested else 1
         return (time_difference_seconds, is_earlier_penalty)
 
@@ -137,7 +128,6 @@ def nearest_alternatives(
     return sorted_candidates[:n]
 
 
-# Regex for natural time inputs like "3:30 pm", "15:30", "3pm", "3"
 _TIME_REGEX = re.compile(r"^(\d{1,2})(?::?(\d{2}))?(?::\d{2})?\s*(am|pm|a|p)?$")
 
 
@@ -168,7 +158,6 @@ def parse_time(s: str) -> time:
     elif am_pm and am_pm.startswith("a") and hour == 12:
         hour = 0
     elif not am_pm and 1 <= hour <= 7:
-        # For business hours (8 AM - 6 PM), numbers 1-7 naturally mean PM
         hour += 12
 
     if not (0 <= hour <= 23 and 0 <= minute <= 59):
@@ -195,12 +184,10 @@ def parse_date(s: str, today: date) -> date:
     if text == "day after tomorrow":
         return today + timedelta(days=2)
 
-    # 1. ISO format (YYYY-MM-DD)
     iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
     if iso_match:
         return date.fromisoformat(iso_match.group(1))
 
-    # 2. Weekday names (e.g., "thursday", "next friday")
     words = text.replace("this ", "").split()
     is_next = bool(words) and words[0] == "next"
     if is_next:
@@ -215,7 +202,6 @@ def parse_date(s: str, today: date) -> date:
                     day_offset = 7
                 return today + timedelta(days=day_offset)
 
-    # 3. Calendar date strings (e.g., "October 8th", "10/8")
     cleaned_date = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text)
     cleaned_date = re.sub(r"^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+", "", cleaned_date)
 
@@ -230,7 +216,6 @@ def parse_date(s: str, today: date) -> date:
         except ValueError:
             continue
 
-        # If year was omitted, default to current year (or next year if date passed)
         if "%Y" not in fmt:
             parsed = parsed.replace(year=today.year)
             if parsed < today:
@@ -249,14 +234,12 @@ def parse_datetime(s: str, today: date, tz: tzinfo) -> datetime:
     """
     raw = (s or "").strip()
 
-    # Try standard ISO parsing first
     try:
         dt = datetime.fromisoformat(raw.replace(" ", "T", 1))
         return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt.astimezone(tz)
     except ValueError:
         pass
 
-    # Match '<date portion> [at] <time portion>'
     match = re.match(r"^(.*?)[\s,@]+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)$", raw, re.IGNORECASE)
     if not match:
         raise ValueError(f"Couldn't understand the date/time '{s}'. Use 'YYYY-MM-DD HH:MM'.")

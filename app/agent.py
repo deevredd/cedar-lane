@@ -26,7 +26,6 @@ from app.tools.registry import dispatch, openai_tools
 
 log = logging.getLogger(__name__)
 
-# Max tool round-trips allowed in a single user turn to prevent infinite loops
 MAX_TOOL_HOPS = 8
 
 
@@ -37,9 +36,8 @@ class ChatSession:
     messages: List[Dict[str, Any]] = field(default_factory=list)
 
 
-# In-memory dictionary of active chat sessions: {session_id: ChatSession}
 _ACTIVE_SESSIONS: Dict[str, ChatSession] = {}
-_SESSIONS = _ACTIVE_SESSIONS  # Backwards-compatible alias for unit test inspection
+_SESSIONS = _ACTIVE_SESSIONS
 
 
 def get_or_create_session(session_id: str) -> ChatSession:
@@ -66,7 +64,6 @@ def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, An
 
     system_message = messages[0]
 
-    # Find the earliest USER message starting from 14 messages back
     target_idx = None
     for idx in range(len(messages) - 14, 0, -1):
         if messages[idx].get("role") == "user":
@@ -79,7 +76,6 @@ def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return messages
 
 
-# Persistent HTTP client with keep-alive connection pooling to eliminate TLS handshake latency
 _HTTP_CLIENT = httpx.Client(
     timeout=httpx.Timeout(45.0, connect=10.0),
     limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
@@ -99,7 +95,6 @@ def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
     headers = {"Authorization": f"Bearer {settings.llm_api_key}"}
 
-    # Exponential backoff retry loop for rate limits (429) or transient server errors
     response = None
     for attempt in range(5):
         response = _HTTP_CLIENT.post(endpoint_url, json=payload, headers=headers)
@@ -116,7 +111,7 @@ def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     return response.json()
 
 
-_complete = _call_llm  # Backwards-compatible alias for unit test mocking
+_complete = _call_llm
 
 
 NUMBER_WORDS = {
@@ -137,11 +132,9 @@ def _extract_user_provided_digits(messages: List[Dict[str, Any]]) -> str:
         if msg.get("role") == "user"
     )
 
-    # Convert spoken word numbers ("four one five...") to digits
     for word, digit in NUMBER_WORDS.items():
         user_text = re.sub(rf"\b{word}\b", digit, user_text)
 
-    # Extract all digits
     return "".join(re.findall(r"\d", user_text))
 
 
@@ -150,29 +143,23 @@ def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
     execution_trace: List[Dict[str, Any]] = []
 
     for _ in range(MAX_TOOL_HOPS):
-        # 1. Ask LLM for next action
         response_json = _complete(session.messages)
         assistant_message = response_json["choices"][0]["message"]
         tool_calls = assistant_message.get("tool_calls") or []
 
-        # Ensure every tool call has an ID
         for call in tool_calls:
             call["id"] = call.get("id") or f"call_{uuid.uuid4().hex[:12]}"
 
-        # Record assistant response in conversation history
         clean_assistant_message = {k: v for k, v in assistant_message.items() if v is not None}
         clean_assistant_message["role"] = "assistant"
         session.messages.append(clean_assistant_message)
 
-        # 2. If no tools were called, LLM produced its final conversational response
         if not tool_calls:
             final_text = (assistant_message.get("content") or "").strip()
-            # Fallback if logging happened with empty text
             if not final_text and execution_trace and any(t["tool"] == "log_interaction" for t in execution_trace):
                 final_text = "You're all set! Thanks for reaching out to Cedar Lane Auto Detailing, have a great day!"
             return {"reply": final_text, "tools": execution_trace}
 
-        # 3. LLM requested tool execution
         for call in tool_calls:
             tool_name = call["function"]["name"]
             try:
@@ -180,7 +167,6 @@ def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
             except json.JSONDecodeError:
                 tool_args = {}
 
-            # Strict guard against phone number hallucination
             if tool_name == "book_appointment":
                 phone_arg_digits = "".join(re.findall(r"\d", str(tool_args.get("phone", ""))))[-10:]
                 actual_user_digits = _extract_user_provided_digits(session.messages)
@@ -199,17 +185,15 @@ def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
                     })
                     continue
 
-            # Execute tool through registry
             try:
                 tool_result = dispatch(tool_name, tool_args, session.state)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.exception("Tool execution error in %s: %s", tool_name, exc)
                 tool_result = {"error": f"Failed to execute {tool_name}: {exc}"}
 
             log.info("Tool executed: %s(%s) -> %s", tool_name, tool_args, tool_result)
             execution_trace.append({"tool": tool_name, "args": tool_args, "result": tool_result})
 
-            # Append tool result for LLM to see in the next iteration
             session.messages.append({
                 "role": "tool",
                 "tool_call_id": call["id"],
@@ -249,7 +233,7 @@ def end_chat(session_id: str) -> Dict[str, Any]:
             ),
         })
         output = _run_conversation_turn(session)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.warning("Graceful recovery during end_chat logging: %s", exc)
 
     return output

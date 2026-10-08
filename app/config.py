@@ -13,12 +13,10 @@ load_dotenv(ROOT / ".env")
 
 class Settings:
     def __init__(self) -> None:
-        # LLM (any OpenAI-compatible endpoint; default = Gemini free tier)
         self.llm_base_url = os.getenv("LLM_BASE_URL", "https://generativelanguage.googleapis.com/v1beta/openai/")
         self.llm_api_key = os.getenv("LLM_API_KEY", "")
         self.llm_model = os.getenv("LLM_MODEL", "gemini-2.5-flash")
 
-        # Google
         sa_file = os.getenv("GOOGLE_SERVICE_ACCOUNT_FILE", "service_account.json")
         self.google_sa_file = str((ROOT / sa_file) if not os.path.isabs(sa_file) else Path(sa_file))
         self.google_sa_json = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
@@ -26,7 +24,6 @@ class Settings:
         self.sheet_id = os.getenv("SHEET_ID", "")
         self.shop_timezone = os.getenv("SHOP_TIMEZONE", "America/Los_Angeles")
 
-        # Vapi
         self.vapi_api_key = os.getenv("VAPI_API_KEY", "")
         self.vapi_assistant_id = os.getenv("VAPI_ASSISTANT_ID", "")
         self.public_base_url = os.getenv("PUBLIC_BASE_URL", "").rstrip("/")

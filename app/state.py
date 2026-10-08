@@ -9,9 +9,9 @@ from typing import Dict, List, Optional
 @dataclass
 class SessionState:
     session_id: str
-    channel: str = "chat"            # "chat" | "voice"
-    caller_phone: Optional[str] = None  # caller ID (voice only)
-    phone: Optional[str] = None      # phone collected / used during the conversation
+    channel: str = "chat"
+    caller_phone: Optional[str] = None
+    phone: Optional[str] = None
     name: Optional[str] = None
     event_ids: List[str] = field(default_factory=list)
     intents: List[str] = field(default_factory=list)

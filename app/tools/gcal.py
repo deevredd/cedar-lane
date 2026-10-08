@@ -25,10 +25,8 @@ from app.tools import sheets
 
 log = logging.getLogger(__name__)
 
-# Thread-local storage for Google Calendar API service instance
 _thread_local = threading.local()
 
-# Concurrency lock: ensures two callers cannot book the exact same slot simultaneously
 _booking_lock = threading.Lock()
 
 
@@ -55,11 +53,9 @@ def event_bounds(event: Dict[str, Any]) -> Tuple[datetime, datetime]:
     start_info = event["start"]
     end_info = event["end"]
 
-    # Normal timed appointment
     if "dateTime" in start_info:
         return _parse_iso_datetime(start_info["dateTime"]), _parse_iso_datetime(end_info["dateTime"])
 
-    # All-day event (e.g. "Shop Closed" or holiday) blocks the full 24 hours
     shop_tz = settings.tz
     start_dt = datetime.combine(date.fromisoformat(start_info["date"]), time(0), tzinfo=shop_tz)
     end_dt = datetime.combine(date.fromisoformat(end_info["date"]), time(0), tzinfo=shop_tz)
@@ -86,7 +82,7 @@ def list_events(start_dt: datetime, end_dt: datetime, **extra_query_params) -> L
 
         for item in response.get("items", []):
             is_cancelled = item.get("status") == "cancelled"
-            is_transparent = item.get("transparency") == "transparent"  # Free/available time
+            is_transparent = item.get("transparency") == "transparent"
             if not is_cancelled and not is_transparent:
                 all_events.append(item)
 
@@ -99,7 +95,6 @@ def list_events(start_dt: datetime, end_dt: datetime, **extra_query_params) -> L
 
 import time as _py_time
 
-# Short-lived (30s) cache for calendar day busy ranges to eliminate repeat API latency
 _BUSY_CACHE: Dict[date, Tuple[float, List[Tuple[datetime, datetime]]]] = {}
 
 
@@ -144,7 +139,6 @@ def _find_next_available_day(
     """Scan upcoming days until an open day with valid slots is found."""
     for day_offset in range(lookahead_days):
         check_date = from_date + timedelta(days=day_offset)
-        # Skip days the shop is closed
         if not scheduling.open_hours(check_date):
             continue
 
@@ -173,7 +167,6 @@ def _build_alternatives_dict(
         "alternatives": [_format_slot_dict(slot) for slot in nearby_slots]
     }
 
-    # If the entire day is booked solid, find the next open day
     if not nearby_slots:
         next_day = requested_dt.date() + timedelta(days=1)
         result["next_available"] = _find_next_available_day(next_day, duration_min, exclude_id=exclude_id)
@@ -181,9 +174,6 @@ def _build_alternatives_dict(
     return result
 
 
-# -----------------------------------------------------------------------------
-# Tool Handlers
-# -----------------------------------------------------------------------------
 
 def check_availability(service: str, date: str, time: Optional[str] = None) -> Dict[str, Any]:
     """Check if a service can be booked on a given date and time.
@@ -202,13 +192,11 @@ def check_availability(service: str, date: str, time: Optional[str] = None) -> D
         "weekday": target_date.strftime("%A"),
     }
 
-    # 1. Check if date is in the past
     if target_date < today:
         base_result["available"] = False
         base_result["reason"] = "That date is in the past."
         return base_result
 
-    # 2. Check if shop is open on this day of the week
     if not scheduling.open_hours(target_date):
         base_result["available"] = False
         base_result["reason"] = f"We're closed on {target_date:%A}s."
@@ -219,7 +207,6 @@ def check_availability(service: str, date: str, time: Optional[str] = None) -> D
 
     busy_times = _day_busy(target_date)
 
-    # 3. If a specific time was requested, check that exact slot
     if time:
         requested_time = scheduling.parse_time(time)
         requested_dt = datetime.combine(target_date, requested_time, tzinfo=settings.tz)
@@ -237,7 +224,6 @@ def check_availability(service: str, date: str, time: Optional[str] = None) -> D
 
         return base_result
 
-    # 4. If no time was specified, return all open slots on that day
     open_slots = scheduling.candidate_starts(
         target_date, service_info.duration_min, busy_times, now(), settings.tz
     )
@@ -266,7 +252,6 @@ def book_appointment(
     start_dt = scheduling.parse_datetime(start, now().date(), settings.tz)
 
     with _booking_lock:
-        # Atomic check-then-insert under lock to prevent double booking
         busy_times = _day_busy(start_dt.date())
         is_open, rejection_reason = scheduling.check_slot(
             start_dt, service_info.duration_min, busy_times, now()
@@ -320,7 +305,6 @@ def book_appointment(
         "phone": format_phone(e164_phone),
     }
 
-    # Keep Google Sheets CRM updated with the new appointment
     booking_confirmation.update(sync_contact(e164_phone, name=name, vehicle=vehicle))
     return booking_confirmation
 
@@ -418,7 +402,6 @@ def reschedule_appointment(event_id: str, new_start: str) -> Dict[str, Any]:
         "title": existing_event.get("summary", ""),
     }
 
-    # Sync Sheets CRM with updated upcoming date
     phone = ((existing_event.get("extendedProperties") or {}).get("private") or {}).get("phone")
     if phone:
         reschedule_confirmation.update(sync_contact(phone))
@@ -443,7 +426,6 @@ def cancel_appointment(event_id: str) -> Dict[str, Any]:
         "title": existing_event.get("summary", ""),
     }
 
-    # Sync Sheets CRM
     phone = ((existing_event.get("extendedProperties") or {}).get("private") or {}).get("phone")
     if phone:
         cancellation_result.update(sync_contact(phone))
@@ -489,7 +471,7 @@ def sync_contact(e164_phone: str, name: Optional[str] = None, vehicle: Optional[
                 vehicle=vehicle,
                 upcoming=formatted_appointments,
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("Background contact sheet sync failed: %s", exc)
 
     threading.Thread(target=_run_background_sync, daemon=True).start()

@@ -46,7 +46,6 @@ CALLLOG_COLUMNS = [
     "needs_followup",
 ]
 
-# Thread lock to prevent race conditions during concurrent sheet writes
 _sheet_lock = threading.RLock()
 _cached_spreadsheet = None
 
@@ -99,11 +98,9 @@ def upsert_contact(
         existing_phones = worksheet.col_values(1)
         timestamp = _current_timestamp()
 
-        # Check if caller already exists in the sheet
         if phone in existing_phones:
             row_idx = existing_phones.index(phone) + 1
             raw_values = worksheet.row_values(row_idx)
-            # Pad values to match header length if trailing columns were empty
             raw_values += [""] * (len(CONTACT_COLUMNS) - len(raw_values))
             record = dict(zip(CONTACT_COLUMNS, raw_values))
         else:
@@ -113,7 +110,6 @@ def upsert_contact(
             record["first_contact"] = timestamp
             record["total_interactions"] = "0"
 
-        # Update customer fields if provided
         if name:
             record["name"] = name
         if vehicle:
@@ -124,7 +120,6 @@ def upsert_contact(
             existing_note = record.get("notes", "")
             record["notes"] = f"{existing_note} | {note}" if existing_note else note
 
-        # Track conversation frequency
         current_interactions = int(record.get("total_interactions") or 0)
         if increment_interactions:
             record["total_interactions"] = current_interactions + 1
@@ -133,12 +128,10 @@ def upsert_contact(
         row_data = [record[col] for col in CONTACT_COLUMNS]
 
         if row_idx:
-            # Overwrite existing row
             range_name = f"A{row_idx}:{_column_letter(len(row_data))}{row_idx}"
             worksheet.update(range_name=range_name, values=[row_data], value_input_option="RAW")
             return row_idx
         else:
-            # Append new row
             response = worksheet.append_row(row_data, value_input_option="RAW")
             return _row_number_from_response(response)
 

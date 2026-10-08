@@ -153,7 +153,6 @@ def log_interaction_for(st: SessionState, name: str = "", phone: str = "", inten
     first = not st.logged
     st.logged = True
 
-    # Run heavy Google Sheets network write in a background daemon thread
     import threading
 
     def _do_sheet_write():
@@ -167,7 +166,7 @@ def log_interaction_for(st: SessionState, name: str = "", phone: str = "", inten
                 note = f"FOLLOW UP: {summary}" if needs_followup else None
                 sheets.upsert_contact(e164, name=caller_name or None, note=note if first or needs_followup else None,
                                       increment_interactions=first)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             log.warning("Background interaction logging failed: %s", exc)
 
     threading.Thread(target=_do_sheet_write, daemon=True).start()
@@ -199,7 +198,7 @@ def dispatch(name: str, args: Dict[str, Any], st: SessionState) -> Dict[str, Any
         return handler(clean, st)
     except (ValueError, TypeError) as exc:
         return {"error": str(exc)}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("Tool %s failed", name)
         return {"error": f"Internal error while running {name}: {exc}. Apologize and offer to have someone call back."}
 

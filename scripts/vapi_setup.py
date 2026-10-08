@@ -8,17 +8,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import httpx  # noqa: E402
+import httpx
 
-from app import business  # noqa: E402
-from app.config import settings  # noqa: E402
-from app.prompt import build_prompt  # noqa: E402
-from app.tools.registry import TOOL_SPECS  # noqa: E402
+from app import business
+from app.config import settings
+from app.prompt import build_prompt
+from app.tools.registry import TOOL_SPECS
 
 API = "https://api.vapi.ai"
 NAME = "Cedar Lane Receptionist"
 
-# What the agent says while a slow tool runs (fills silence like a human would).
 FILLERS = {
     "check_availability": "Let me check…",
     "find_appointments": "One sec, pulling that up…",
@@ -56,7 +55,6 @@ def assistant_config():
         },
         "transcriber": {"provider": "deepgram", "model": "nova-3", "language": "en"},
         "voice": {"provider": settings.vapi_voice_provider, "voiceId": settings.vapi_voice_id},
-        # --- latency / turn-taking knobs ---
         "startSpeakingPlan": {
             "waitSeconds": 0.4,
             "smartEndpointingPlan": {"provider": "livekit"},

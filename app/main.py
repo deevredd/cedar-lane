@@ -42,7 +42,7 @@ def health():
 def api_chat(body: ChatIn):
     try:
         return agent.chat(body.session_id, body.message)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("chat failed")
         raise HTTPException(500, str(exc))
 
@@ -51,12 +51,11 @@ def api_chat(body: ChatIn):
 def api_end(body: ChatIn):
     try:
         return agent.end_chat(body.session_id)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         log.exception("end failed")
         raise HTTPException(500, str(exc))
 
 
-# ------------------------------------------------------------------ Vapi
 
 def _parse_args(raw: Any) -> Dict[str, Any]:
     if isinstance(raw, dict):
@@ -91,7 +90,6 @@ async def vapi_webhook(request: Request, x_vapi_secret: Optional[str] = Header(d
         return {"results": results}
 
     if mtype == "end-of-call-report":
-        # Safety net: every call gets a CallLog row even if the model never called log_interaction.
         if not st.logged:
             analysis = msg.get("analysis") or {}
             summary = analysis.get("summary") or msg.get("summary") or "Call ended (no summary)."
