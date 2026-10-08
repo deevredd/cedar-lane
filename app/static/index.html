@@ -11,6 +11,11 @@
   .agent span { background: #f1f5f9; }
   .m span { display: inline-block; padding: 8px 12px; border-radius: 12px; max-width: 80%; text-align: left; }
   .tool { font: 11px monospace; color: #475569; margin: 4px 0 4px 12px; background: #f8fafc; border-left: 3px solid #94a3b8; padding: 4px 8px; border-radius: 4px; }
+  .typing-bubble { display: inline-flex; align-items: center; gap: 5px; padding: 10px 14px; background: #f1f5f9; border-radius: 12px; }
+  .dot { width: 6px; height: 6px; background: #64748b; border-radius: 50%; animation: blink 1.2s infinite ease-in-out; }
+  .dot:nth-child(2) { animation-delay: 0.2s; }
+  .dot:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes blink { 0%, 60%, 100% { transform: translateY(0); opacity: 0.3; } 30% { transform: translateY(-4px); opacity: 1; } }
   form { display: flex; gap: 8px; margin-top: 8px; } input { flex: 1; padding: 10px; }
 </style>
 </head>
@@ -53,6 +58,16 @@ async function post(path, message, explicitSessionId) {
 const sendBtn = document.querySelector('#f button:not(#end)');
 const endBtn = document.getElementById('end');
 
+function showTyping() {
+  const d = document.createElement('div'); d.className = 'm agent'; d.id = 'typing-indicator';
+  d.innerHTML = '<span class="typing-bubble"><span class="dot"></span><span class="dot"></span><span class="dot"></span></span>';
+  log.appendChild(d); log.scrollTop = log.scrollHeight;
+}
+function hideTyping() {
+  const el = document.getElementById('typing-indicator');
+  if (el) el.remove();
+}
+
 document.getElementById('f').onsubmit = async (e) => {
   e.preventDefault();
   const msg = t.value.trim();
@@ -63,15 +78,15 @@ document.getElementById('f').onsubmit = async (e) => {
   if (sendBtn) sendBtn.disabled = true;
 
   add('user', msg);
-  add('agent', '… (thinking)');
+  showTyping();
 
   try {
     const r = await post('/api/chat', msg);
-    log.lastChild.remove();
+    hideTyping();
     tools(r.tools);
     if (r.reply) { add('agent', r.reply); }
   } catch (err) {
-    log.lastChild.remove();
+    hideTyping();
     add('agent', 'Error: ' + err.message);
   } finally {
     t.disabled = false;

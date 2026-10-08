@@ -79,6 +79,13 @@ def _trim_history_if_needed(messages: List[Dict[str, Any]]) -> List[Dict[str, An
     return messages
 
 
+# Persistent HTTP client with keep-alive connection pooling to eliminate TLS handshake latency
+_HTTP_CLIENT = httpx.Client(
+    timeout=httpx.Timeout(45.0, connect=10.0),
+    limits=httpx.Limits(max_keepalive_connections=20, max_connections=50),
+)
+
+
 def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     """Send HTTP request to OpenAI-compatible chat completions endpoint (with retries)."""
     endpoint_url = settings.llm_base_url.rstrip("/") + "/chat/completions"
@@ -94,7 +101,7 @@ def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
     # Exponential backoff retry loop for rate limits (429) or transient server errors
     response = None
     for attempt in range(5):
-        response = httpx.post(endpoint_url, json=payload, headers=headers, timeout=90)
+        response = _HTTP_CLIENT.post(endpoint_url, json=payload, headers=headers)
         if response.status_code in (429, 500, 502, 503, 504):
             wait_seconds = (2 ** attempt) * 2
             log.warning("LLM %s, retrying in %ds...", response.status_code, wait_seconds)

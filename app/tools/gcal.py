@@ -97,12 +97,34 @@ def list_events(start_dt: datetime, end_dt: datetime, **extra_query_params) -> L
     return all_events
 
 
+import time as _py_time
+
+# Short-lived (30s) cache for calendar day busy ranges to eliminate repeat API latency
+_BUSY_CACHE: Dict[date, Tuple[float, List[Tuple[datetime, datetime]]]] = {}
+
+
+def invalidate_calendar_cache():
+    """Clear cached busy ranges upon new booking, reschedule, or cancellation."""
+    _BUSY_CACHE.clear()
+
+
 def _day_busy(target_date: date, exclude_id: Optional[str] = None) -> List[Tuple[datetime, datetime]]:
     """Return list of (start, end) time ranges already booked on target_date."""
+    now_ts = _py_time.time()
+    if not exclude_id and target_date in _BUSY_CACHE:
+        cached_ts, cached_events = _BUSY_CACHE[target_date]
+        if now_ts - cached_ts < 30.0:
+            return cached_events
+
     day_start = datetime.combine(target_date, time(0), tzinfo=settings.tz)
     day_end = day_start + timedelta(days=1)
     events = list_events(day_start, day_end)
-    return [event_bounds(ev) for ev in events if ev.get("id") != exclude_id]
+    busy_list = [event_bounds(ev) for ev in events if ev.get("id") != exclude_id]
+
+    if not exclude_id:
+        _BUSY_CACHE[target_date] = (now_ts, busy_list)
+
+    return busy_list
 
 
 def _format_slot_dict(dt: datetime) -> Dict[str, str]:
@@ -286,6 +308,7 @@ def book_appointment(
         created_event = _get_calendar_service().events().insert(
             calendarId=settings.calendar_id, body=event_body
         ).execute()
+        invalidate_calendar_cache()
 
     booking_confirmation = {
         "booked": True,
@@ -385,6 +408,7 @@ def reschedule_appointment(event_id: str, new_start: str) -> Dict[str, Any]:
                 "end": {"dateTime": new_end_dt.isoformat(), "timeZone": settings.shop_timezone},
             },
         ).execute()
+        invalidate_calendar_cache()
 
     reschedule_confirmation = {
         "rescheduled": True,
@@ -410,6 +434,7 @@ def cancel_appointment(event_id: str) -> Dict[str, Any]:
     _get_calendar_service().events().delete(
         calendarId=settings.calendar_id, eventId=event_id
     ).execute()
+    invalidate_calendar_cache()
 
     cancellation_result = {
         "cancelled": True,
