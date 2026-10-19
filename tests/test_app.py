@@ -12,11 +12,11 @@ from tests.test_scheduling import NOW, THU, THU_BUSY, TZ
 def test_check_availability_offers_430(monkeypatch):
     monkeypatch.setattr(gcal, "now", lambda: NOW)
     monkeypatch.setattr(gcal, "_day_busy", lambda d, exclude_id=None: THU_BUSY if d == THU else [])
-    res = gcal.check_availability("interior_detail_and_wash", "thursday", "15:30")
+    res = gcal.check_availability("interior_detail_and_wash", "2026-10-08", "15:30")
     assert res["available"] is False
     assert res["alternatives"][0]["start"] == "2026-10-08 16:30"
-    assert gcal.check_availability("interior_detail_and_wash", "thursday", "4:30 pm")["available"] is True
-    closed = gcal.check_availability("exterior_wash", "sunday")
+    assert gcal.check_availability("interior_detail_and_wash", "2026-10-08", "4:30 pm")["available"] is True
+    closed = gcal.check_availability("exterior_wash", "2026-10-11")
     assert closed["available"] is False and closed["next_available"]["weekday"] == "Monday"
 
 
@@ -30,7 +30,7 @@ def test_book_rejects_conflict(monkeypatch):
 def test_dispatch_filters_and_contains_errors():
     st = get_state("t1")
     assert "error" in registry.dispatch("nope", {}, st)
-    assert "error" in registry.dispatch("check_availability", {"service": "boat_wash", "date": "thursday"}, st)
+    assert "error" in registry.dispatch("check_availability", {"service": "boat_wash", "date": "2026-10-08"}, st)
 
 
 def test_every_spec_has_handler():
@@ -41,7 +41,7 @@ def test_agent_loop_runs_tools(monkeypatch):
     replies = iter([
         {"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
             {"id": "c1", "type": "function", "function": {"name": "check_availability",
-             "arguments": json.dumps({"service": "interior_detail_and_wash", "date": "thursday", "time": "15:30"})}}]}}]},
+             "arguments": json.dumps({"service": "interior_detail_and_wash", "date": "2026-10-08", "time": "15:30"})}}]}}]},
         {"choices": [{"message": {"role": "assistant", "content": "That one's full. 4:30 is open, want that instead?"}}]},
     ])
     seen = []
@@ -59,11 +59,11 @@ def test_vapi_webhook_tool_calls(monkeypatch):
     client = TestClient(main.app)
     payload = {"message": {"type": "tool-calls", "call": {"id": "call-1", "customer": {"number": "+14155550190"}},
                            "toolCallList": [{"id": "tc1", "type": "function", "function": {
-                               "name": "check_availability", "arguments": {"service": "exterior_wash", "date": "friday"}}}]}}
+                               "name": "check_availability", "arguments": {"service": "exterior_wash", "date": "2026-10-09"}}}]}}
     r = client.post("/vapi/webhook", json=payload)
     assert r.status_code == 200
     assert r.json() == {"results": [{"toolCallId": "tc1", "result": json.dumps({"ok": 1})}]}
-    assert calls == [("check_availability", {"service": "exterior_wash", "date": "friday"}, "voice", "+14155550190")]
+    assert calls == [("check_availability", {"service": "exterior_wash", "date": "2026-10-09"}, "voice", "+14155550190")]
 
 
 def test_vapi_end_of_call_fallback_logs(monkeypatch):

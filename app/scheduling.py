@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-import re
 from datetime import date, datetime, time, timedelta, tzinfo
 from typing import List, Optional, Sequence, Tuple
 
 from app import business
 
 SLOT_STEP_MIN = 30
-WEEKDAYS = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
 
 BusyTimes = Sequence[Tuple[datetime, datetime]]
 
@@ -106,104 +104,45 @@ def nearest_alternatives(
     return sorted_candidates[:n]
 
 
-_TIME_REGEX = re.compile(r"^(\d{1,2})(?::?(\d{2}))?(?::\d{2})?\s*(am|pm|a|p)?$")
+def parse_date(s: str) -> date:
+    raw = (s or "").strip()
+    try:
+        return date.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(raw, fmt).date()
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid date format '{s}'. Use 'YYYY-MM-DD'.")
 
 
 def parse_time(s: str) -> time:
-    clean = (s or "").strip().lower().replace(".", "").replace("o'clock", "").strip()
-
-    if clean in ("noon", "midday"):
-        return time(12, 0)
-
-    match = _TIME_REGEX.match(clean)
-    if not match:
-        raise ValueError(f"Couldn't understand the time '{s}'.")
-
-    hour = int(match.group(1))
-    minute = int(match.group(2) or 0)
-    am_pm = match.group(3)
-
-    if am_pm and am_pm.startswith("p") and hour < 12:
-        hour += 12
-    elif am_pm and am_pm.startswith("a") and hour == 12:
-        hour = 0
-    elif not am_pm and 1 <= hour <= 7:
-        hour += 12
-
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError(f"Couldn't understand the time '{s}'.")
-
-    return time(hour, minute)
-
-
-def parse_date(s: str, today: date) -> date:
-    text = (s or "").strip().lower().rstrip(".,")
-
-    if text in ("today", "tonight"):
-        return today
-    if text == "tomorrow":
-        return today + timedelta(days=1)
-    if text == "day after tomorrow":
-        return today + timedelta(days=2)
-
-    iso_match = re.match(r"^(\d{4}-\d{2}-\d{2})", text)
-    if iso_match:
-        return date.fromisoformat(iso_match.group(1))
-
-    words = text.replace("this ", "").split()
-    is_next = bool(words) and words[0] == "next"
-    if is_next:
-        words = words[1:]
-
-    if len(words) == 1:
-        weekday_word = words[0]
-        for index, weekday_name in enumerate(WEEKDAYS):
-            if weekday_word == weekday_name or (len(weekday_word) >= 3 and weekday_name.startswith(weekday_word)):
-                day_offset = (index - today.weekday()) % 7
-                if day_offset == 0 and is_next:
-                    day_offset = 7
-                return today + timedelta(days=day_offset)
-
-    cleaned_date = re.sub(r"(\d)(st|nd|rd|th)\b", r"\1", text)
-    cleaned_date = re.sub(r"^(mon|tue|wed|thu|fri|sat|sun)[a-z]*,?\s+", "", cleaned_date)
-
-    supported_formats = (
-        "%B %d", "%b %d", "%m/%d",
-        "%B %d %Y", "%b %d %Y", "%m/%d/%Y",
-        "%B %d, %Y", "%b %d, %Y"
-    )
-    for fmt in supported_formats:
+    raw = (s or "").strip().lower().replace(".", "")
+    try:
+        return time.fromisoformat(raw)
+    except ValueError:
+        pass
+    for fmt in ("%H:%M", "%H:%M:%S", "%I:%M %p", "%I:%M%p", "%I %p", "%I%p"):
         try:
-            parsed = datetime.strptime(cleaned_date, fmt).date()
+            return datetime.strptime(raw, fmt).time()
         except ValueError:
             continue
-
-        if "%Y" not in fmt:
-            parsed = parsed.replace(year=today.year)
-            if parsed < today:
-                parsed = parsed.replace(year=today.year + 1)
-        return parsed
-
-    raise ValueError(f"Couldn't understand the date '{s}'. Use YYYY-MM-DD.")
+    raise ValueError(f"Invalid time format '{s}'. Use 24h 'HH:MM'.")
 
 
-def parse_datetime(s: str, today: date, tz: tzinfo) -> datetime:
+def parse_datetime(s: str, tz: tzinfo) -> datetime:
     raw = (s or "").strip()
-
     try:
         dt = datetime.fromisoformat(raw.replace(" ", "T", 1))
         return dt.replace(tzinfo=tz) if dt.tzinfo is None else dt.astimezone(tz)
     except ValueError:
         pass
-
-    match = re.match(r"^(.*?)[\s,@]+(?:at\s+)?(\d{1,2}(?::\d{2})?\s*(?:am|pm|a\.m\.|p\.m\.)?)$", raw, re.IGNORECASE)
-    if not match:
-        raise ValueError(f"Couldn't understand the date/time '{s}'. Use 'YYYY-MM-DD HH:MM'.")
-
-    date_part_str = re.sub(r"\s+at$", "", match.group(1).strip(), flags=re.IGNORECASE)
-    time_part_str = match.group(2)
-
-    parsed_date = parse_date(date_part_str, today)
-    parsed_time = parse_time(time_part_str)
-
-    return datetime.combine(parsed_date, parsed_time, tzinfo=tz)
+    for fmt in ("%Y-%m-%d %H:%M", "%Y-%m-%d %H:%M:%S", "%Y/%m/%d %H:%M"):
+        try:
+            dt = datetime.strptime(raw, fmt)
+            return dt.replace(tzinfo=tz)
+        except ValueError:
+            continue
+    raise ValueError(f"Invalid datetime format '{s}'. Use 'YYYY-MM-DD HH:MM'.")

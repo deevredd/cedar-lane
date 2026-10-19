@@ -158,7 +158,7 @@ def _build_alternatives_dict(
 def check_availability(service: str, date: str, time: Optional[str] = None) -> Dict[str, Any]:
     service_info = business.get_service(service)
     today = now().date()
-    target_date = scheduling.parse_date(date, today)
+    target_date = scheduling.parse_date(date)
 
     base_result: Dict[str, Any] = {
         "service": service_info.name,
@@ -223,7 +223,7 @@ def book_appointment(
 ) -> Dict[str, Any]:
     service_info = business.get_service(service)
     e164_phone = normalize_phone(phone)
-    start_dt = scheduling.parse_datetime(start, now().date(), settings.tz)
+    start_dt = scheduling.parse_datetime(start, settings.tz)
 
     with _booking_lock:
         busy_times = _day_busy(start_dt.date())
@@ -333,7 +333,7 @@ def reschedule_appointment(event_id: str, new_start: str) -> Dict[str, Any]:
     old_start, old_end = event_bounds(existing_event)
     duration_mins = int((old_end - old_start).total_seconds() // 60)
 
-    target_dt = scheduling.parse_datetime(new_start, now().date(), settings.tz)
+    target_dt = scheduling.parse_datetime(new_start, settings.tz)
 
     with _booking_lock:
         busy_times = _day_busy(target_dt.date(), exclude_id=event_id)

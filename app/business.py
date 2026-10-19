@@ -48,22 +48,10 @@ HOURS: Dict[int, Optional[Tuple[time, time]]] = {
     6: None,
 }
 
-SERVICE_ALIASES = {
-    "wash": "exterior_wash", "exterior": "exterior_wash", "car wash": "exterior_wash",
-    "interior": "interior_detail", "interior detail": "interior_detail",
-    "interior detail and wash": "interior_detail_and_wash", "interior and wash": "interior_detail_and_wash",
-    "interior detail + wash": "interior_detail_and_wash",
-    "full": "full_detail", "full detail": "full_detail",
-}
-
-
 def get_service(key: str) -> Service:
     k = (key or "").strip().lower()
     if k in SERVICES:
         return SERVICES[k]
-    k2 = k.replace("_", " ").replace("&", "and")
-    if k2 in SERVICE_ALIASES:
-        return SERVICES[SERVICE_ALIASES[k2]]
     raise ValueError(f"Unknown service '{key}'. Valid services: {', '.join(SERVICES)}")
 
 

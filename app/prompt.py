@@ -68,14 +68,14 @@ def _date_table(now: datetime) -> str:
 def chat_today_block() -> str:
     now = datetime.now(settings.tz)
     return (f"Right now it is {now:%A, %B} {now.day}, {now.year}, {scheduling.fmt_time(now)} shop time ({settings.shop_timezone}).\n"
-            f"Upcoming dates: {_date_table(now)}.\nWhen a caller says a weekday like 'Thursday', they mean the next one coming up.")
+            f"Upcoming dates: {_date_table(now)}.\nWhen a caller mentions a day or time, resolve it to an exact date ('YYYY-MM-DD') and time ('HH:MM') when calling tools.")
 
 
 def voice_today_block() -> str:
     tz = settings.shop_timezone
     return ('Right now it is {{"now" | date: "%A, %B %d, %Y, %I:%M %p", "' + tz + '"}} shop time.\n'
-            "When a caller says a weekday like 'Thursday', pass the weekday name (e.g. 'thursday') or 'tomorrow' as the "
-            "date to check_availability; the tool works out the actual date and returns 'YYYY-MM-DD HH:MM' start values to reuse.")
+            "When a caller specifies a day or time (like 'Thursday' or 'tomorrow at 3'), resolve it to an exact "
+            "date ('YYYY-MM-DD') and time ('HH:MM') when calling tools.")
 
 
 def build_prompt(channel: str = "chat") -> str:

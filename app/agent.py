@@ -96,25 +96,6 @@ def _call_llm(messages: List[Dict[str, Any]]) -> Dict[str, Any]:
 _complete = _call_llm
 
 
-NUMBER_WORDS = {
-    "zero": "0", "oh": "0", "one": "1", "two": "2", "three": "3", "four": "4",
-    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
-}
-
-
-def _extract_user_provided_digits(messages: List[Dict[str, Any]]) -> str:
-    user_text = " ".join(
-        msg.get("content", "").lower()
-        for msg in messages
-        if msg.get("role") == "user"
-    )
-
-    for word, digit in NUMBER_WORDS.items():
-        user_text = re.sub(rf"\b{word}\b", digit, user_text)
-
-    return "".join(re.findall(r"\d", user_text))
-
-
 def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
     execution_trace: List[Dict[str, Any]] = []
 
@@ -142,24 +123,6 @@ def _run_conversation_turn(session: ChatSession) -> Dict[str, Any]:
                 tool_args = json.loads(call["function"].get("arguments") or "{}")
             except json.JSONDecodeError:
                 tool_args = {}
-
-            if tool_name == "book_appointment":
-                phone_arg_digits = "".join(re.findall(r"\d", str(tool_args.get("phone", ""))))[-10:]
-                actual_user_digits = _extract_user_provided_digits(session.messages)
-
-                if not phone_arg_digits or phone_arg_digits not in actual_user_digits:
-                    blocked_result = {
-                        "booked": False,
-                        "error": "The customer has not provided their phone number yet. Ask the customer: 'What is your phone number?'",
-                    }
-                    log.warning("Blocked booking with unverified phone number: %s", tool_args.get("phone"))
-                    execution_trace.append({"tool": tool_name, "args": tool_args, "result": blocked_result})
-                    session.messages.append({
-                        "role": "tool",
-                        "tool_call_id": call["id"],
-                        "content": json.dumps(blocked_result),
-                    })
-                    continue
 
             try:
                 tool_result = dispatch(tool_name, tool_args, session.state)

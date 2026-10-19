@@ -36,11 +36,11 @@ def clear_seeded(all_events: bool = False):
 
 def seed(with_sheet: bool):
     today = datetime.now(settings.tz).date()
+    weekday_map = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3, "friday": 4, "saturday": 5, "sunday": 6}
     for day, hhmm, svc_key, name, phone, vehicle in SEED:
         svc = business.SERVICES[svc_key]
-        d = scheduling.parse_date(day, today)
-        if d < today:
-            d += timedelta(days=7)
+        day_offset = (weekday_map[day.lower()] - today.weekday()) % 7
+        d = today + timedelta(days=day_offset if day_offset > 0 else 7)
         start = datetime.combine(d, scheduling.parse_time(hhmm), tzinfo=settings.tz)
         end = start + timedelta(minutes=svc.duration_min)
         body = {

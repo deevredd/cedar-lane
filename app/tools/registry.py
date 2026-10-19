@@ -24,8 +24,8 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "service": {"type": "string", "enum": SERVICE_ENUM},
-                "date": {"type": "string", "description": "YYYY-MM-DD, or 'today', 'tomorrow', or a weekday name like 'thursday'."},
-                "time": {"type": "string", "description": "Requested start time, 24h 'HH:MM' (e.g. '15:30')."},
+                "date": {"type": "string", "description": "Date to check formatted as 'YYYY-MM-DD'."},
+                "time": {"type": "string", "description": "Requested start time in 24h format 'HH:MM' (e.g. '15:30'). Omit to list all available slots."},
             },
             "required": ["service", "date"],
         },
@@ -40,7 +40,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "name": {"type": "string", "description": "Caller's name."},
                 "phone": {"type": "string", "description": "Caller's 10-digit phone number as explicitly stated by the caller. You MUST ask the customer for this if you do not have it. Never guess or invent a number."},
                 "service": {"type": "string", "enum": SERVICE_ENUM},
-                "start": {"type": "string", "description": "Agreed start time as 'YYYY-MM-DD HH:MM' (24h) from check_availability, or '<day> HH:MM' (e.g. '2026-10-08 16:30' or 'thursday 16:30'). Keep the exact date agreed upon!"},
+                "start": {"type": "string", "description": "Agreed start time as 'YYYY-MM-DD HH:MM' (24h) or ISO-8601 string. Keep the exact date agreed upon!"},
                 "vehicle": {"type": "string", "description": "Vehicle make/model/type if mentioned."},
                 "notes": {"type": "string", "description": "Any special requests (pet hair, stains, etc.)."},
             },
@@ -63,7 +63,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             "type": "object",
             "properties": {
                 "event_id": {"type": "string"},
-                "new_start": {"type": "string", "description": "'YYYY-MM-DD HH:MM' (24h)."},
+                "new_start": {"type": "string", "description": "New start time as 'YYYY-MM-DD HH:MM' (24h) or ISO-8601 string."},
             },
             "required": ["event_id", "new_start"],
         },
