@@ -1,5 +1,6 @@
 import json
 from datetime import datetime
+from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
 
@@ -22,9 +23,25 @@ def test_check_availability_offers_430(monkeypatch):
 
 def test_book_rejects_conflict(monkeypatch):
     monkeypatch.setattr(gcal, "now", lambda: NOW)
+    monkeypatch.setattr(gcal, "list_events", lambda *a, **k: [])
     monkeypatch.setattr(gcal, "_day_busy", lambda d, exclude_id=None: THU_BUSY)
     res = gcal.book_appointment("Sara", "415-555-0190", "interior_detail_and_wash", "2026-10-08 15:30")
     assert res["booked"] is False and res["alternatives"][0]["start"] == "2026-10-08 16:30"
+
+
+def test_book_idempotent_retry_prevents_duplicate(monkeypatch):
+    mock_existing_event = {
+        "id": "existing_ev_123",
+        "start": {"dateTime": "2026-10-08T15:30:00-07:00"},
+        "end": {"dateTime": "2026-10-08T16:30:00-07:00"},
+        "summary": "Interior Detail + Wash – Sara",
+        "status": "confirmed",
+    }
+    monkeypatch.setattr(gcal, "now", lambda: NOW)
+    monkeypatch.setattr(gcal, "list_events", lambda *a, **k: [mock_existing_event])
+    res = gcal.book_appointment("Sara", "415-555-0190", "interior_detail_and_wash", "2026-10-08 15:30")
+    assert res["booked"] is True
+    assert res["event_id"] == "existing_ev_123"
 
 
 def test_dispatch_filters_and_contains_errors():
@@ -51,6 +68,88 @@ def test_agent_loop_runs_tools(monkeypatch):
     assert "4:30" in out["reply"] and seen[0][0] == "check_availability"
     msgs = agent._SESSIONS["s-agent"].messages
     assert msgs[-2]["role"] == "tool" and msgs[-2]["tool_call_id"] == "c1"
+
+
+def test_post_booking_vehicle_addition(monkeypatch):
+    replies = iter([
+        {"choices": [{"message": {"role": "assistant", "content": "Got it, added your Tesla to the appointment notes.",
+                                  "tool_calls": [
+            {"id": "c2", "type": "function", "function": {"name": "add_note_to_appointment",
+             "arguments": json.dumps({"event_id": "ev_123", "note": "Vehicle: Tesla"})}}]}}]},
+        {"choices": [{"message": {"role": "assistant", "content": "Anything else you need today?"}}]},
+    ])
+    seen = []
+    session = agent.get_or_create_session("s-post-book")
+    session.state.event_ids.append("ev_123")
+    monkeypatch.setattr(agent, "_complete", lambda msgs: next(replies))
+    monkeypatch.setattr(agent, "dispatch", lambda n, a, st: seen.append((n, a)) or {"noted": True})
+    out = agent.chat("s-post-book", "tesla")
+    assert seen[0][0] == "add_note_to_appointment"
+    assert seen[0][1]["note"] == "Vehicle: Tesla"
+    assert seen[0][1]["event_id"] == "ev_123"
+
+
+def test_reschedule_preserves_original_booking_on_conflict(monkeypatch):
+    mock_event = {
+        "id": "ev_target",
+        "start": {"dateTime": "2026-10-08T10:00:00-07:00"},
+        "end": {"dateTime": "2026-10-08T11:00:00-07:00"},
+        "summary": "Interior Detail – Alex",
+    }
+    monkeypatch.setattr(gcal, "now", lambda: NOW)
+    monkeypatch.setattr(gcal, "_fetch_event", lambda eid: mock_event)
+    monkeypatch.setattr(gcal, "_day_busy", lambda d, exclude_id=None: [(gcal.now(), gcal.now())])
+    monkeypatch.setattr(gcal.scheduling, "check_slot", lambda *a: (False, "Slot taken"))
+
+    res = gcal.reschedule_appointment("ev_target", "2026-10-08 14:00")
+    assert res["rescheduled"] is False
+    assert "Slot taken" in res["reason"]
+
+
+def test_add_note_to_appointment_preserves_description(monkeypatch):
+    existing_desc = "Customer: Eve\nPhone: (415) 555-0190"
+    mock_event = {"id": "ev_note_test", "description": existing_desc}
+    patched_body = {}
+
+    mock_service = MagicMock()
+    mock_service.events().get().execute.return_value = mock_event
+    mock_service.events().patch().execute.side_effect = lambda **kwargs: patched_body.update(kwargs)
+
+    monkeypatch.setattr(gcal, "_get_calendar_service", lambda: mock_service)
+    res = gcal.add_note_to_appointment("ev_note_test", "Vehicle: Tesla Model 3")
+    assert res["noted"] is True
+    assert res["event_id"] == "ev_note_test"
+
+
+def test_cancel_appointment_deletes_event(monkeypatch):
+    deleted_events = []
+    mock_event = {
+        "id": "ev_cancel_test",
+        "start": {"dateTime": "2026-10-08T10:00:00-07:00"},
+        "end": {"dateTime": "2026-10-08T11:00:00-07:00"},
+    }
+    mock_service = MagicMock()
+    mock_service.events().get().execute.return_value = mock_event
+    mock_service.events().delete().execute.side_effect = lambda **kwargs: deleted_events.append(kwargs)
+
+    monkeypatch.setattr(gcal, "_get_calendar_service", lambda: mock_service)
+    monkeypatch.setattr(gcal, "invalidate_calendar_cache", lambda: None)
+    res = gcal.cancel_appointment("ev_cancel_test")
+    assert res["cancelled"] is True
+    assert res["event_id"] == "ev_cancel_test"
+
+
+def test_find_appointments_normalizes_phone(monkeypatch):
+    monkeypatch.setattr(gcal, "_upcoming_appointments_for", lambda phone: [{"id": "ev_1", "name": "Eve"}])
+    res = gcal.find_appointments("415 555 0190")
+    assert res["phone"] == "(415) 555-0190"
+    assert len(res["appointments"]) == 1
+
+
+def test_dispatch_missing_required_arguments():
+    st = get_state("t_missing")
+    res = registry.dispatch("book_appointment", {"name": "Eve"}, st)
+    assert "error" in res
 
 
 def test_vapi_webhook_tool_calls(monkeypatch):

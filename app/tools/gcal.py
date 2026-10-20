@@ -226,6 +226,22 @@ def book_appointment(
     start_dt = scheduling.parse_datetime(start, settings.tz)
 
     with _booking_lock:
+        day_start = datetime.combine(start_dt.date(), time(0), tzinfo=settings.tz)
+        day_end = day_start + timedelta(days=1)
+        existing_today = list_events(day_start, day_end, privateExtendedProperty=f"phone={e164_phone}")
+        for ev in existing_today:
+            ev_start, _ = event_bounds(ev)
+            if abs((ev_start - start_dt).total_seconds()) < 60 and ev.get("status") != "cancelled":
+                return {
+                    "booked": True,
+                    "event_id": ev["id"],
+                    "service": service_info.name,
+                    "price": service_info.price,
+                    "when": scheduling.fmt_label(start_dt),
+                    "name": name,
+                    "phone": format_phone(e164_phone),
+                }
+
         busy_times = _day_busy(start_dt.date())
         is_open, rejection_reason = scheduling.check_slot(
             start_dt, service_info.duration_min, busy_times, now()

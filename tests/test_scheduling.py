@@ -23,37 +23,44 @@ THU_BUSY = [(at(THU, 9), at(THU, 12)), (at(THU, 12, 30), at(THU, 13, 30)),
 @pytest.mark.parametrize("raw,expected", [
     ("15:30", time(15, 30)), ("3:30 pm", time(15, 30)), ("3:30pm", time(15, 30)),
     ("3pm", time(15)), ("9:00 AM", time(9)), ("16:30:00", time(16, 30)),
+    ("08:00", time(8, 0)), ("12:00 PM", time(12, 0)), ("12:00 AM", time(0, 0)),
+    ("1:15 pm", time(13, 15)), ("11:45 am", time(11, 45)),
 ])
 def test_parse_time(raw, expected):
     assert s.parse_time(raw) == expected
 
 
-def test_parse_time_invalid():
+@pytest.mark.parametrize("invalid", ["invalid-time", "25:00", "12:60", "", "noonish"])
+def test_parse_time_invalid(invalid):
     with pytest.raises(ValueError):
-        s.parse_time("invalid-time")
+        s.parse_time(invalid)
 
 
 @pytest.mark.parametrize("raw,expected", [
-    ("2026-10-08", THU), ("2026/10/08", THU),
+    ("2026-10-08", THU), ("2026/10/08", THU), ("2026-10-07", WED),
+    ("2026-12-31", date(2026, 12, 31)), ("2027-01-01", date(2027, 1, 1)),
 ])
 def test_parse_date(raw, expected):
     assert s.parse_date(raw) == expected
 
 
-def test_parse_date_invalid():
+@pytest.mark.parametrize("invalid", ["not-a-date", "2026-02-30", "10/08/2026", "yesterday", ""])
+def test_parse_date_invalid(invalid):
     with pytest.raises(ValueError):
-        s.parse_date("not-a-date")
+        s.parse_date(invalid)
 
 
 def test_parse_datetime():
     assert s.parse_datetime("2026-10-08 16:30", TZ) == at(THU, 16, 30)
     assert s.parse_datetime("2026-10-08T16:30", TZ) == at(THU, 16, 30)
+    assert s.parse_datetime("2026-10-08T16:30:00", TZ) == at(THU, 16, 30)
     assert s.parse_datetime("2026/10/08 16:30", TZ) == at(THU, 16, 30)
 
 
-def test_parse_datetime_invalid():
+@pytest.mark.parametrize("invalid", ["not-a-datetime", "invalid-date-time", "16:30", ""])
+def test_parse_datetime_invalid(invalid):
     with pytest.raises(ValueError):
-        s.parse_datetime("not-a-datetime", TZ)
+        s.parse_datetime(invalid, TZ)
 
 
 def test_spec_scenario_330_full_430_offered():
@@ -79,9 +86,36 @@ def test_boundaries():
     assert s.candidate_starts(date(2026, 10, 11), 30, [], NOW, TZ) == []
 
 
+def test_slot_past_closing_rejected():
+    ok, reason = s.check_slot(at(THU, 17, 30), 60, [], NOW)
+    assert not ok
+    assert "run past closing" in reason
+
+
+def test_slot_before_opening_rejected():
+    ok, reason = s.check_slot(at(THU, 7, 30), 30, [], NOW)
+    assert not ok
+    assert "outside business hours" in reason
+
+
+def test_slot_already_passed_rejected():
+    ok, reason = s.check_slot(at(WED, 9), 30, [], NOW)
+    assert not ok
+    assert "already passed" in reason
+
+
+def test_sunday_closed():
+    sunday = date(2026, 10, 11)
+    assert s.open_hours(sunday) is None
+    ok, reason = s.check_slot(at(sunday, 10), 30, [], NOW)
+    assert not ok
+    assert "closed" in reason
+
+
 def test_fmt():
     assert s.fmt_label(at(THU, 16, 30)) == "Thursday Oct 8, 4:30 PM"
     assert s.fmt_time(at(THU, 9)) == "9:00 AM"
+    assert s.fmt_time(at(THU, 13, 5)) == "1:05 PM"
 
 
 @pytest.mark.parametrize("raw,expected", [
@@ -94,6 +128,7 @@ def test_phone(raw, expected):
     assert format_phone(normalize_phone(raw)) == "(415) 555-0190"
 
 
-def test_phone_invalid():
+@pytest.mark.parametrize("invalid", ["555-0190", "abc", "", "12345"])
+def test_phone_invalid(invalid):
     with pytest.raises(ValueError):
-        normalize_phone("555-0190")
+        normalize_phone(invalid)
