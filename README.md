@@ -70,19 +70,6 @@ python scripts/vapi_setup.py
 
 ---
 
-## Test Suite
-62 automated unit tests verify deterministic safety:
-```bash
-pytest
-# 62 passed in 0.44s
-```
-- Multi-turn out-of-order entity extraction & post-booking note updates.
-- Concurrency locks & idempotent retry protection.
-- Atomic reschedule preservation under conflict.
-- Slot duration calculation & operating hour boundary checks.
-
----
-
 ## Repository Layout
 ```
 app/business.py        Services, pricing, shop hours, vehicle surcharges
